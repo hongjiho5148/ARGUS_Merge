@@ -1,0 +1,156 @@
+"""
+ARGUS v2 - SQL Injection ZAP Engine
+"""
+
+import time
+from typing import List, Dict, Optional
+from zapv2 import ZAPv2
+from models import DetectionResult, DetectionSource, RiskLevel, InjectionType
+
+class ZapEngine:
+    def __init__(self, proxy_address: str = "127.0.0.1:8090", api_key: str = "argus_secret_key"):
+        self.proxy_address = proxy_address
+        self.api_key = api_key
+        self.zap = ZAPv2(
+            apikey=api_key,
+            proxies={"http": f"http://{proxy_address}", "https": f"http://{proxy_address}"}
+        )
+        self.policy_name = "Argus_SQLi_Policy"
+    
+    def log(self, message: str):
+        print(f"[ZAP] {message}")
+
+    def configure_scan(self, target_url: str, swagger_url: str = "", jwt_token: str = ""):
+        # Create Policy
+        self.log("스캔 정책을 초기화합니다 (INSANE / LOW)...")
+        self.zap.ascan.remove_scan_policy(scanpolicyname=self.policy_name)
+        self.zap.ascan.add_scan_policy(scanpolicyname=self.policy_name, alertthreshold="LOW", attackstrength="INSANE")
+        
+        # Disable all plugins first, then enable only SQL Injection plugins
+        self.zap.ascan.disable_all_scanners(scanpolicyname=self.policy_name)
+        sqli_plugins = [
+            "40018", # SQL Injection
+            "40019", # SQL Injection - MySQL
+            "40020", # SQL Injection - Hypersonic SQL
+            "40021", # SQL Injection - Oracle
+            "40022", # SQL Injection - PostgreSQL
+            "40024", # SQL Injection - SQLite
+            "90018", # Advanced SQL Injection
+        ]
+        cmdi_plugins = ["90020"] # Remote OS Command Injection
+        
+        all_plugins = sqli_plugins + cmdi_plugins
+        for pid in all_plugins:
+            self.zap.ascan.enable_scanners(ids=pid, scanpolicyname=self.policy_name)
+            self.zap.ascan.set_scanner_attack_strength(id=pid, attackstrength="INSANE", scanpolicyname=self.policy_name)
+            self.zap.ascan.set_scanner_alert_threshold(id=pid, alertthreshold="LOW", scanpolicyname=self.policy_name)
+
+        # Apply JWT Token using Replacer
+        self.zap.replacer.remove_rule(description="Auth_JWT")
+        if jwt_token:
+            self.log("JWT 인증 토큰을 ZAP Replacer에 등록합니다.")
+            auth_value = jwt_token if jwt_token.lower().startswith("bearer") else f"Bearer {jwt_token}"
+            self.zap.replacer.add_rule(
+                description="Auth_JWT",
+                enabled=True,
+                matchtype="REQ_HEADER",
+                matchregex=False,
+                matchstring="Authorization",
+                replacement=auth_value
+            )
+
+        # Import Swagger
+        if swagger_url:
+            self.log(f"Swagger 명세를 임포트합니다: {swagger_url}")
+            self.zap.openapi.import_url(swagger_url, target_url)
+            time.sleep(2)
+            
+        # Run Spider
+        self.log(f"Spider 크롤러를 실행합니다: {target_url}")
+        scan_id = self.zap.spider.scan(url=target_url, maxchildren=10)
+        while int(self.zap.spider.status(scan_id)) < 100:
+            time.sleep(1)
+            
+        time.sleep(2)
+
+    def run_active_scan(self, target_url: str) -> List[DetectionResult]:
+        self.log(f"Active Scan (SQL Injection) 시작: {target_url}")
+        scan_id = self.zap.ascan.scan(url=target_url, recurse=True, scanpolicyname=self.policy_name)
+        
+        while int(self.zap.ascan.status(scan_id)) < 100:
+            time.sleep(2)
+            
+        self.log("Active Scan 완료. 결과를 수집합니다.")
+        return self._collect_results(target_url)
+
+    def _collect_results(self, target_url: str) -> List[DetectionResult]:
+        alerts = self.zap.core.alerts(baseurl=target_url)
+        results = []
+        for a in alerts:
+            # We only care about High risk (or Medium depending on strictness)
+            if a.get("risk") not in ["High", "Medium"]:
+                continue
+                
+            plugin_id = a.get("pluginId", "")
+            method = a.get("method", "GET")
+            url = a.get("url", "")
+            param = a.get("param", "")
+            attack = a.get("attack", "")
+            other_info = a.get("other", "")
+            evidence = a.get("evidence", "")
+            description = a.get("description", "")
+            solution = a.get("solution", "")
+            message_id = a.get("messageId", "")
+            
+            raw_request_body = ""
+            raw_request_url = url
+            if message_id:
+                try:
+                    msg = self.zap.core.message(message_id)
+                    raw_request_body = msg.get("requestBody", "")
+                    
+                    req_header = msg.get("requestHeader", "")
+                    if req_header:
+                        lines = req_header.split("\r\n")
+                        if not lines or len(lines) == 1:
+                            lines = req_header.split("\n")
+                        
+                        if lines:
+                            parts = lines[0].split(" ")
+                            if len(parts) >= 2:
+                                raw_request_url = parts[1]
+                except:
+                    pass
+            
+            # extract time delay if possible from other_info
+            delay_ms = 0
+            if "took [" in other_info and "milliseconds" in other_info:
+                import re
+                match = re.search(r"took \[(\d+)\] milliseconds", other_info)
+                if match:
+                    delay_ms = int(match.group(1))
+
+            # Map plugin ID to InjectionType
+            injection_type = InjectionType.SQL
+            if plugin_id in ["90020"]:
+                injection_type = InjectionType.COMMAND
+
+            res = DetectionResult(
+                method=method,
+                url=url,
+                param=param,
+                risk=a.get("risk", "High").upper(),
+                plugin_name=a.get("alert", ""),
+                injection_type=injection_type,
+                has_zap=True,
+                zap_payload=attack,
+                zap_time_delay_ms=delay_ms,
+                evidence=evidence,
+                description=description,
+                solution=solution,
+                raw_request_body=raw_request_body,
+                raw_request_url=raw_request_url
+            )
+            results.append(res)
+            
+        return results

@@ -1,0 +1,696 @@
+"""
+ARGUS v2 - Injection Payload Injector (Custom Multi-Signal Verification)
+"""
+
+import copy
+import difflib
+import json
+import re
+import time
+import urllib.parse
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
+
+import requests
+
+from models import DetectionResult, VerificationStatus
+
+
+@dataclass
+class ProbeResponse:
+    elapsed: float
+    status_code: str
+    text: str
+    headers: Dict[str, str]
+    error: str = ""
+
+
+class BaseInjector:
+    SQL_ERROR_PATTERNS = [
+        r"SQL syntax.*MySQL",
+        r"Warning.*mysql_",
+        r"valid MySQL result",
+        r"MySqlClient\.",
+        r"PostgreSQL.*ERROR",
+        r"org\.postgresql\.util\.PSQLException",
+        r"unterminated quoted string",
+        r"ORA-\d{5}",
+        r"Oracle error",
+        r"Microsoft SQL Native Client",
+        r"SQL Server",
+        r"Unclosed quotation mark",
+        r"ODBC SQL Server Driver",
+        r"SQLite/JDBCDriver",
+        r"SQLiteException",
+        r"sqlite3\.OperationalError",
+        r"near .*: syntax error",
+        r"JdbcSQLSyntaxErrorException",
+        r"BadSqlGrammarException",
+        r"SQLGrammarException",
+        r"DataIntegrityViolationException",
+        r"syntax error at or near",
+    ]
+
+    COMMAND_ERROR_PATTERNS = [
+        r"/bin/sh:",
+        r"cmd\.exe",
+        r"command not found",
+        r"No such file or directory",
+        r"Permission denied",
+        r"CreateProcess error",
+        r"Runtime\.exec",
+    ]
+
+    XML_XPATH_ERROR_PATTERNS = [
+        r"XPathExpressionException",
+        r"XPathException",
+        r"javax\.xml\.xpath",
+        r"Invalid XPath",
+        r"xmlXPath",
+        r"SAXParseException",
+        r"DOCTYPE is disallowed",
+        r"DocumentBuilder",
+        r"XML parser",
+        r"XSLT",
+        r"TransformerException",
+        r"SOAPException",
+    ]
+
+    def __init__(self, jwt_token: str = "", verification_mode: str = "balanced"):
+        self.jwt_token = jwt_token
+        self.verification_mode = verification_mode
+        self.headers = {"Content-Type": "application/json"}
+        if self.jwt_token:
+            auth_val = self.jwt_token if self.jwt_token.lower().startswith("bearer") else f"Bearer {self.jwt_token}"
+            self.headers["Authorization"] = auth_val
+
+        self.sleep_secs = 3
+        self.time_payloads: List[str] = []
+        self.error_payloads: List[str] = []
+        self.boolean_pairs: List[Tuple[str, str]] = []
+
+    def _request_headers(self, result: DetectionResult) -> Dict[str, str]:
+        headers = dict(self.headers)
+        for key, value in (result.raw_request_headers or {}).items():
+            if key.lower() in {"host", "content-length", "accept-encoding"}:
+                continue
+            headers[key] = value
+        if self.jwt_token:
+            auth_val = self.jwt_token if self.jwt_token.lower().startswith("bearer") else f"Bearer {self.jwt_token}"
+            headers["Authorization"] = auth_val
+        return headers
+
+    def _absolute_url(self, result: DetectionResult) -> str:
+        candidate = result.raw_request_url or result.url
+        if candidate.startswith("http://") or candidate.startswith("https://"):
+            return candidate
+        base = urllib.parse.urlparse(result.url)
+        if candidate.startswith("/"):
+            return f"{base.scheme}://{base.netloc}{candidate}"
+        return result.url
+
+    def send_probe(self, method: str, url: str, body: Optional[str], headers: Dict[str, str]) -> ProbeResponse:
+        try:
+            start = time.time()
+            response = requests.request(
+                method=method,
+                url=url,
+                headers=headers,
+                data=body.encode("utf-8") if body is not None else None,
+                timeout=max(10, self.sleep_secs + 5),
+                allow_redirects=False,
+            )
+            elapsed = time.time() - start
+            return ProbeResponse(
+                elapsed=elapsed,
+                status_code=str(response.status_code),
+                text=response.text[:200000],
+                headers=dict(response.headers),
+            )
+        except requests.exceptions.Timeout:
+            return ProbeResponse(float(max(10, self.sleep_secs + 5)), "TIMEOUT", "", {}, "timeout")
+        except Exception as exc:
+            return ProbeResponse(-1.0, "ERROR", "", {}, str(exc))
+
+    def _normalize_param_name(self, value: str) -> str:
+        return (value or "").strip().strip("«»").casefold()
+
+    def _param_matches(self, candidate: str, target: str) -> bool:
+        return self._normalize_param_name(candidate) == self._normalize_param_name(target)
+
+    def _replace_path_param(self, url: str, param_name: str, value: str) -> Tuple[str, bool]:
+        parsed = urllib.parse.urlsplit(url)
+        target = self._normalize_param_name(param_name)
+        if not parsed.path or not target:
+            return url, False
+
+        changed = False
+        segments = []
+        for segment in parsed.path.split("/"):
+            decoded = urllib.parse.unquote(segment)
+            normalized = self._normalize_param_name(decoded.strip("{}<>:"))
+            if normalized == target or decoded in {f"{{{param_name}}}", f":{param_name}", f"<{param_name}>"}:
+                segments.append(urllib.parse.quote(value, safe=""))
+                changed = True
+            else:
+                segments.append(segment)
+        if not changed:
+            return url, False
+        path = "/".join(segments)
+        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, parsed.query, parsed.fragment)), True
+
+    def _replace_query_param(self, url: str, param_name: str, value: str) -> Tuple[str, bool]:
+        parsed = urllib.parse.urlsplit(url)
+        pairs = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+        changed = False
+        replaced = []
+        for key, current in pairs:
+            if self._param_matches(key, param_name):
+                replaced.append((key, value))
+                changed = True
+            else:
+                replaced.append((key, current))
+        if not changed:
+            return url, False
+        query = urllib.parse.urlencode(replaced, doseq=True)
+        return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, query, parsed.fragment)), True
+
+    def _replace_json_param(self, raw_body: str, param_name: str, value: str) -> Tuple[str, bool]:
+        if not raw_body:
+            return raw_body, False
+        try:
+            body_obj = json.loads(raw_body)
+        except json.JSONDecodeError:
+            return raw_body, False
+
+        changed = False
+
+        def walk(node: Any) -> Any:
+            nonlocal changed
+            if isinstance(node, dict):
+                next_node = {}
+                for key, current in node.items():
+                    if self._param_matches(key, param_name):
+                        next_node[key] = value
+                        changed = True
+                    else:
+                        next_node[key] = walk(current)
+                return next_node
+            if isinstance(node, list):
+                return [walk(item) for item in node]
+            return node
+
+        replaced = walk(copy.deepcopy(body_obj))
+        if not changed:
+            return raw_body, False
+        return json.dumps(replaced, ensure_ascii=False, separators=(",", ":")), True
+
+    def _replace_header_param(self, headers: Dict[str, str], param_name: str, value: str) -> Tuple[Dict[str, str], bool]:
+        changed = False
+        replaced = {}
+        for key, current in headers.items():
+            if self._param_matches(key, param_name):
+                replaced[key] = value
+                changed = True
+            else:
+                replaced[key] = current
+        return replaced, changed
+
+    def _replace_form_param(self, raw_body: str, param_name: str, value: str) -> Tuple[str, bool]:
+        if not raw_body or "=" not in raw_body:
+            return raw_body, False
+        pairs = urllib.parse.parse_qsl(raw_body, keep_blank_values=True)
+        if not pairs:
+            return raw_body, False
+
+        changed = False
+        replaced = []
+        for key, current in pairs:
+            if self._param_matches(key, param_name):
+                replaced.append((key, value))
+                changed = True
+            else:
+                replaced.append((key, current))
+        if not changed:
+            return raw_body, False
+        return urllib.parse.urlencode(replaced, doseq=True), True
+
+    def _replace_attack_literal(self, url: str, body: str, attack: str, value: str) -> Tuple[str, str, bool]:
+        if not attack:
+            return url, body, False
+        changed = False
+        encoded_attack = urllib.parse.quote(attack, safe="")
+        encoded_value = urllib.parse.quote(value, safe="")
+        if encoded_attack and encoded_attack in url:
+            url = url.replace(encoded_attack, encoded_value)
+            changed = True
+        elif attack in url:
+            url = url.replace(attack, value)
+            changed = True
+
+        if body:
+            json_attack = json.dumps(attack)[1:-1]
+            json_value = json.dumps(value)[1:-1]
+            if json_attack and json_attack in body:
+                body = body.replace(json_attack, json_value)
+                changed = True
+            elif attack in body:
+                body = body.replace(attack, value)
+                changed = True
+        return url, body, changed
+
+    def _build_variant(self, result: DetectionResult, replacement: str) -> Tuple[str, str, bool, str]:
+        url = self._absolute_url(result)
+        body = result.raw_request_body or ""
+        param_name = result.param or ""
+
+        url, path_changed = self._replace_path_param(url, param_name, replacement)
+        url, query_changed = self._replace_query_param(url, param_name, replacement)
+        body, body_changed = self._replace_json_param(body, param_name, replacement)
+        form_body, form_changed = self._replace_form_param(body, param_name, replacement)
+        if form_changed:
+            body = form_body
+        if path_changed or query_changed or body_changed or form_changed:
+            locations = []
+            if path_changed:
+                locations.append("path")
+            if query_changed:
+                locations.append("query")
+            if body_changed:
+                locations.append("json_body")
+            if form_changed:
+                locations.append("form_body")
+            return url, body, True, "+".join(locations)
+
+        url, body, literal_changed = self._replace_attack_literal(url, body, result.zap_payload, replacement)
+        if literal_changed:
+            return url, body, True, "zap_attack_literal"
+        return url, body, False, "not_found"
+
+    def _build_probe_variant(
+        self,
+        result: DetectionResult,
+        replacement: str,
+        headers: Dict[str, str],
+    ) -> Tuple[str, str, Dict[str, str], bool, str]:
+        url, body, changed, location = self._build_variant(result, replacement)
+        replaced_headers, header_changed = self._replace_header_param(headers, result.param or "", replacement)
+        if header_changed:
+            locations = [] if location == "not_found" else [location]
+            locations.append("header")
+            return url, body, replaced_headers, True, "+".join(locations)
+        return url, body, headers, changed, location
+
+    def _body_fingerprint(self, text: str) -> str:
+        compact = re.sub(r"\s+", " ", text or "").strip()
+        compact = re.sub(r"\d{4}-\d{2}-\d{2}[T ][\d:.+-Z]*", "<date>", compact)
+        compact = re.sub(r"\b[0-9a-f]{8,}\b", "<hex>", compact, flags=re.I)
+        return compact[:50000]
+
+    def _similarity(self, left: str, right: str) -> float:
+        return difflib.SequenceMatcher(None, self._body_fingerprint(left), self._body_fingerprint(right)).ratio()
+
+    def _match_patterns(self, text: str, patterns: List[str]) -> List[str]:
+        return [p for p in patterns if re.search(p, text or "", re.IGNORECASE)]
+
+    def _add_method(self, result: DetectionResult, name: str, status: VerificationStatus, evidence: str, **extra: Any) -> None:
+        result.verification_methods[name] = {
+            "status": status.value,
+            "evidence": evidence,
+            **extra,
+        }
+
+    def _set_status(self, result: DetectionResult, status: VerificationStatus, reason: str) -> DetectionResult:
+        result.verification_status = status
+        result.verification_reason = reason
+        result.cross_validated = status == VerificationStatus.VERIFIED
+        result.custom_verified = status == VerificationStatus.VERIFIED
+        return result
+
+    def _is_aggressive(self) -> bool:
+        return self.verification_mode == "aggressive"
+
+    def _should_keep_as_suspected(self, result: DetectionResult, baseline: ProbeResponse) -> bool:
+        if not self._is_aggressive():
+            return False
+        high_or_medium = (result.risk or "").upper() in {"HIGH", "MEDIUM"}
+        unstable_baseline = baseline.status_code.startswith("5") or baseline.status_code in {"TIMEOUT", "ERROR"}
+        zap_had_attack = bool(result.zap_payload)
+        return high_or_medium and (unstable_baseline or zap_had_attack)
+
+    def _verify_time_based(self, result: DetectionResult, baseline: ProbeResponse, headers: Dict[str, str], method: str) -> Tuple[bool, float]:
+        max_delay = 0.0
+        tried = 0
+        for payload in self.time_payloads:
+            url, body, probe_headers, changed, location = self._build_probe_variant(result, payload, headers)
+            if not changed:
+                continue
+            tried += 1
+            probe = self.send_probe(method, url, body, probe_headers)
+            max_delay = max(max_delay, probe.elapsed)
+            diff = probe.elapsed - baseline.elapsed
+            if diff >= (self.sleep_secs * 0.8):
+                result.custom_payload = payload
+                result.custom_time_delay_sec = probe.elapsed
+                self._add_method(
+                    result,
+                    "time_based",
+                    VerificationStatus.VERIFIED,
+                    f"Time delta exceeded threshold at {location}.",
+                    baseline_sec=round(baseline.elapsed, 3),
+                    delayed_sec=round(probe.elapsed, 3),
+                    diff_sec=round(diff, 3),
+                    status_code=probe.status_code,
+                    payload=payload,
+                )
+                return True, max_delay
+        self._add_method(
+            result,
+            "time_based",
+            VerificationStatus.FALSE_POSITIVE if tried else VerificationStatus.UNVERIFIABLE,
+            "No meaningful time delta." if tried else "No time-based variant could be built.",
+            baseline_sec=round(baseline.elapsed, 3),
+            max_delay_sec=round(max_delay, 3),
+            tried_payloads=tried,
+        )
+        return False, max_delay
+
+    def _verify_error_based(self, result: DetectionResult, baseline: ProbeResponse, headers: Dict[str, str], method: str) -> bool:
+        error_patterns = self.SQL_ERROR_PATTERNS + self.COMMAND_ERROR_PATTERNS + self.XML_XPATH_ERROR_PATTERNS
+        baseline_errors = set(self._match_patterns(baseline.text, error_patterns))
+        tried = 0
+        for payload in self.error_payloads:
+            url, body, probe_headers, changed, location = self._build_probe_variant(result, payload, headers)
+            if not changed:
+                continue
+            tried += 1
+            probe = self.send_probe(method, url, body, probe_headers)
+            patterns = set(self._match_patterns(probe.text, error_patterns)) - baseline_errors
+            status_changed_to_error = baseline.status_code[0:1] not in {"5"} and probe.status_code.startswith("5")
+            if patterns or status_changed_to_error:
+                result.custom_payload = payload
+                self._add_method(
+                    result,
+                    "error_based",
+                    VerificationStatus.VERIFIED,
+                    f"Error signal changed at {location}.",
+                    status_code=probe.status_code,
+                    matched_patterns=sorted(patterns),
+                    payload=payload,
+                )
+                return True
+        self._add_method(
+            result,
+            "error_based",
+            VerificationStatus.FALSE_POSITIVE if tried else VerificationStatus.UNVERIFIABLE,
+            "No new SQL/command error signal." if tried else "No error-based variant could be built.",
+            tried_payloads=tried,
+        )
+        return False
+
+    def _verify_boolean_based(self, result: DetectionResult, baseline: ProbeResponse, headers: Dict[str, str], method: str) -> bool:
+        tried = 0
+        best_delta = 0.0
+        for true_payload, false_payload in self.boolean_pairs:
+            true_url, true_body, true_headers, true_changed, true_location = self._build_probe_variant(result, true_payload, headers)
+            false_url, false_body, false_headers, false_changed, _ = self._build_probe_variant(result, false_payload, headers)
+            if not (true_changed and false_changed):
+                continue
+            tried += 1
+            true_probe = self.send_probe(method, true_url, true_body, true_headers)
+            false_probe = self.send_probe(method, false_url, false_body, false_headers)
+            true_to_base = self._similarity(true_probe.text, baseline.text)
+            false_to_base = self._similarity(false_probe.text, baseline.text)
+            true_to_false = self._similarity(true_probe.text, false_probe.text)
+            delta = abs(true_to_base - false_to_base)
+            best_delta = max(best_delta, delta)
+            status_diverged = true_probe.status_code != false_probe.status_code and true_probe.status_code == baseline.status_code
+            body_diverged = true_to_base >= 0.90 and false_to_base <= 0.75 and true_to_false <= 0.85
+            if status_diverged or body_diverged:
+                result.custom_payload = f"TRUE:{true_payload} / FALSE:{false_payload}"
+                self._add_method(
+                    result,
+                    "boolean_based",
+                    VerificationStatus.VERIFIED,
+                    f"Boolean true/false responses diverged at {true_location}.",
+                    true_status=true_probe.status_code,
+                    false_status=false_probe.status_code,
+                    true_to_baseline=round(true_to_base, 3),
+                    false_to_baseline=round(false_to_base, 3),
+                    true_to_false=round(true_to_false, 3),
+                    true_payload=true_payload,
+                    false_payload=false_payload,
+                )
+                return True
+        self._add_method(
+            result,
+            "boolean_based",
+            VerificationStatus.FALSE_POSITIVE if tried else VerificationStatus.UNVERIFIABLE,
+            "No stable boolean response divergence." if tried else "No boolean variants could be built.",
+            tried_pairs=tried,
+            best_similarity_delta=round(best_delta, 3),
+        )
+        return False
+
+    def verify_zap_alert(self, result: DetectionResult) -> DetectionResult:
+        try:
+            result.verification_methods = {}
+            method = result.method.upper()
+            headers = self._request_headers(result)
+            clean_url, clean_body, clean_headers, clean_changed, clean_location = self._build_probe_variant(result, "1", headers)
+            if not clean_changed:
+                reason = f"Parameter '{result.param}' was not found in path, query, JSON body, form body, or ZAP attack literal."
+                self._add_method(result, "request_rebuild", VerificationStatus.UNVERIFIABLE, reason)
+                result.evidence = f"Unverifiable. {reason}"
+                return self._set_status(result, VerificationStatus.UNVERIFIABLE, reason)
+
+            baseline = self.send_probe(method, clean_url, clean_body, clean_headers)
+            self._add_method(
+                result,
+                "baseline",
+                VerificationStatus.VERIFIED if baseline.elapsed >= 0 else VerificationStatus.UNVERIFIABLE,
+                f"Baseline request rebuilt via {clean_location}.",
+                status_code=baseline.status_code,
+                elapsed_sec=round(baseline.elapsed, 3),
+            )
+            if baseline.elapsed < 0:
+                reason = f"Baseline request failed ({baseline.error})."
+                result.evidence = f"Unverifiable. {reason}"
+                return self._set_status(result, VerificationStatus.UNVERIFIABLE, reason)
+
+            verified_methods = []
+            max_delay = 0.0
+            if self._verify_error_based(result, baseline, headers, method):
+                verified_methods.append("error_based")
+            boolean_verified = self._verify_boolean_based(result, baseline, headers, method)
+            if boolean_verified:
+                verified_methods.append("boolean_based")
+            time_verified, max_delay = self._verify_time_based(result, baseline, headers, method)
+            if time_verified:
+                verified_methods.append("time_based")
+
+            if verified_methods:
+                reason = "Verified by " + ", ".join(verified_methods) + "."
+                result.evidence = reason
+                return self._set_status(result, VerificationStatus.VERIFIED, reason)
+
+            if self._should_keep_as_suspected(result, baseline):
+                reason = "Kept as suspected in aggressive mode: ZAP reported injection risk, but active verification evidence was inconclusive."
+                if baseline.status_code.startswith("5"):
+                    reason += " Baseline request returned 5xx, so the endpoint is not stable enough to dismiss safely."
+                result.evidence = reason
+                return self._set_status(result, VerificationStatus.SUSPECTED, reason)
+
+            method_statuses = [m["status"] for m in result.verification_methods.values()]
+            if method_statuses and all(s == VerificationStatus.UNVERIFIABLE.value for s in method_statuses if s != VerificationStatus.VERIFIED.value):
+                reason = "All verification methods were unverifiable."
+                result.evidence = reason
+                return self._set_status(result, VerificationStatus.UNVERIFIABLE, reason)
+
+            reason = "No error, boolean, or time-based evidence confirmed injection."
+            result.custom_time_delay_sec = max_delay
+            result.evidence = reason
+            return self._set_status(result, VerificationStatus.FALSE_POSITIVE, reason)
+        except Exception as exc:
+            result.evidence = f"Verification error: {exc}"
+            self._add_method(result, "exception", VerificationStatus.ERROR, str(exc))
+            return self._set_status(result, VerificationStatus.ERROR, str(exc))
+
+
+class SqliInjector(BaseInjector):
+    def __init__(self, jwt_token: str = "", verification_mode: str = "balanced"):
+        super().__init__(jwt_token, verification_mode)
+        self.error_payloads = [
+            "'",
+            "\"",
+            "')",
+            "\")",
+            "'--",
+            "\"--",
+            "1'",
+            "1\"",
+            "1' AND EXTRACTVALUE(1, CONCAT(0x7e, VERSION(), 0x7e))-- -",
+            "1' AND UPDATEXML(1, CONCAT(0x7e, DATABASE(), 0x7e), 1)-- -",
+            "1' UNION SELECT NULL-- -",
+            "1' OR '1'='1'-- -",
+        ]
+        self.boolean_pairs = [
+            ("1 AND 1=1", "1 AND 1=2"),
+            ("1' AND '1'='1'-- -", "1' AND '1'='2'-- -"),
+            ("1\" AND \"1\"=\"1\"-- -", "1\" AND \"1\"=\"2\"-- -"),
+            ("1 OR 1=1", "1 OR 1=2"),
+        ]
+        self.time_payloads = [
+            f"1 AND SLEEP({self.sleep_secs})",
+            f"1' AND SLEEP({self.sleep_secs})-- -",
+            f"' OR SLEEP({self.sleep_secs})-- -",
+            f'" OR SLEEP({self.sleep_secs})-- -',
+            f"1); SELECT pg_sleep({self.sleep_secs})--",
+            f"1' OR pg_sleep({self.sleep_secs}) IS NULL--",
+            f"1 WAITFOR DELAY '0:0:{self.sleep_secs}'--",
+            f"1 OR randomblob({self.sleep_secs}00000000) IS NOT NULL",
+            f"1' OR randomblob({self.sleep_secs}00000000) IS NOT NULL--",
+            f'" OR randomblob({self.sleep_secs}00000000) IS NOT NULL--',
+        ]
+
+
+class CommandInjector(BaseInjector):
+    def __init__(self, jwt_token: str = "", verification_mode: str = "balanced"):
+        super().__init__(jwt_token, verification_mode)
+        self.error_payloads = [
+            "; argus_command_probe_404",
+            "| argus_command_probe_404",
+            "&& argus_command_probe_404",
+            "`argus_command_probe_404`",
+            "$(argus_command_probe_404)",
+        ]
+        self.boolean_pairs = []
+        self.time_payloads = [
+            f"; sleep {self.sleep_secs}",
+            f"| sleep {self.sleep_secs}",
+            f"&& sleep {self.sleep_secs}",
+            f"`sleep {self.sleep_secs}`",
+            f"$(sleep {self.sleep_secs})",
+        ]
+
+
+class NoSqlInjector(BaseInjector):
+    def __init__(self, jwt_token: str = "", verification_mode: str = "balanced"):
+        super().__init__(jwt_token, verification_mode)
+        self.error_payloads = [
+            "'",
+            "\"",
+            "{\"$ne\":null}",
+            "{\"$gt\":\"\"}",
+            "'; return true; var x='",
+        ]
+        self.boolean_pairs = [
+            ('{"$ne":null}', '{"$eq":"ARGUS_FALSE_VALUE"}'),
+            ("' || '1'=='1", "' || '1'=='2"),
+            ('{"$where":"return true"}', '{"$where":"return false"}'),
+        ]
+        self.time_payloads = [
+            "'; sleep(3000); var x='",
+            '{"$where":"sleep(3000) || true"}',
+        ]
+
+
+class XmlXPathInjector(BaseInjector):
+    def __init__(self, jwt_token: str = "", verification_mode: str = "balanced"):
+        super().__init__(jwt_token, verification_mode)
+        self.error_payloads = [
+            "'",
+            '"',
+            "'] | //* | //*['",
+            "' or '1'='1",
+            "\"><!DOCTYPE argus [ <!ENTITY xxe SYSTEM 'file:///etc/passwd'> ]><argus>&xxe;</argus>",
+            "<?xml version='1.0'?><!DOCTYPE argus [ <!ENTITY xxe SYSTEM 'file:///etc/passwd'> ]><argus>&xxe;</argus>",
+            "<xsl:value-of select='system-property(\"xsl:version\")'/>",
+        ]
+        self.boolean_pairs = [
+            ("' or '1'='1", "' or '1'='2"),
+            ("1 or 1=1", "1 or 1=2"),
+        ]
+        self.time_payloads = []
+
+
+class GenericInjectionInjector(BaseInjector):
+    def __init__(self, jwt_token: str = "", verification_mode: str = "balanced"):
+        super().__init__(jwt_token, verification_mode)
+        self.error_payloads = [
+            "'",
+            '"',
+            ";",
+            "|",
+            "%0d%0aX-Argus-Probe: injected",
+        ]
+        self.boolean_pairs = []
+        self.time_payloads = []
+
+
+class SstiInjector(BaseInjector):
+    def __init__(self, jwt_token: str = "", verification_mode: str = "balanced"):
+        super().__init__(jwt_token, verification_mode)
+        self.error_payloads = [
+            "{{",
+            "${",
+            "<%=",
+            "#{",
+            "{{7*'7'}}",
+        ]
+        self.boolean_pairs = [
+            ("{{7*7}}", "{{7*8}}"),
+            ("${7*7}", "${7*8}"),
+            ("<%= 7*7 %>", "<%= 7*8 %>"),
+        ]
+        self.time_payloads = []
+
+    def _verify_template_reflection(self, result: DetectionResult, baseline: ProbeResponse, headers: Dict[str, str], method: str) -> bool:
+        probes = [
+            ("{{7*7}}", "49"),
+            ("${7*7}", "49"),
+            ("<%= 7*7 %>", "49"),
+        ]
+        tried = 0
+        for payload, expected in probes:
+            url, body, changed, location = self._build_variant(result, payload)
+            if not changed:
+                continue
+            tried += 1
+            probe = self.send_probe(method, url, body, headers)
+            if expected in probe.text and expected not in baseline.text:
+                result.custom_payload = payload
+                self._add_method(
+                    result,
+                    "ssti_reflection",
+                    VerificationStatus.VERIFIED,
+                    f"Template expression evaluated at {location}.",
+                    expected=expected,
+                    payload=payload,
+                    status_code=probe.status_code,
+                )
+                return True
+        self._add_method(
+            result,
+            "ssti_reflection",
+            VerificationStatus.FALSE_POSITIVE if tried else VerificationStatus.UNVERIFIABLE,
+            "No template evaluation marker was reflected." if tried else "No SSTI reflection variant could be built.",
+            tried_payloads=tried,
+        )
+        return False
+
+    def verify_zap_alert(self, result: DetectionResult) -> DetectionResult:
+        verified = super().verify_zap_alert(result)
+        if verified.verification_status == VerificationStatus.VERIFIED:
+            return verified
+        method = result.method.upper()
+        headers = self._request_headers(result)
+        clean_url, clean_body, clean_changed, _ = self._build_variant(result, "argus-baseline")
+        if not clean_changed:
+            return verified
+        baseline = self.send_probe(method, clean_url, clean_body, headers)
+        if baseline.elapsed < 0:
+            return verified
+        if self._verify_template_reflection(result, baseline, headers, method):
+            return self._set_status(result, VerificationStatus.VERIFIED, "Verified by ssti_reflection.")
+        return verified

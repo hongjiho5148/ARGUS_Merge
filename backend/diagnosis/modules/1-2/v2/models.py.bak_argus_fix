@@ -1,0 +1,101 @@
+"""
+ARGUS v2 - SQL Injection Pipeline Models
+"""
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Optional, List, Dict
+from urllib.parse import urlparse, parse_qs
+
+class DetectionSource(str, Enum):
+    ZAP_ACTIVE_SCAN = "ZAP_ACTIVE_SCAN"
+    CUSTOM_INJECTOR = "CUSTOM_INJECTOR"
+
+class InjectionType(str, Enum):
+    SQL = "SQL"
+    COMMAND = "COMMAND"
+    NOSQL = "NOSQL"
+    SSTI = "SSTI"
+
+class InputSource(str, Enum):
+    URL_LIST = "URL_LIST"
+    API_LIST = "API_LIST"
+    SWAGGER = "SWAGGER"
+
+class ParamLocation(str, Enum):
+    QUERY = "query"
+    PATH = "path"
+    BODY = "body"
+    HEADER = "header"
+
+class RiskLevel(str, Enum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INFO = "INFO"
+
+@dataclass
+class ScanParam:
+    name: str
+    location: ParamLocation
+    required: bool = False
+    sample_value: Optional[str] = None
+
+@dataclass
+class ScanTarget:
+    method: str
+    base_url: str
+    path: str
+    params: List[ScanParam] = field(default_factory=list)
+    raw_url: Optional[str] = None
+    tags: list = field(default_factory=list)
+    allowed_roles: list = field(default_factory=list)
+    source: InputSource = InputSource.URL_LIST
+    raw: Optional[str] = None
+    content_type: str = ""
+    
+    @property
+    def full_url(self) -> str:
+        return f"{self.base_url.rstrip('/')}{self.path}"
+
+@dataclass
+class DetectionResult:
+    method: str
+    url: str
+    param: str
+    risk: str
+    plugin_name: str
+    injection_type: InjectionType = InjectionType.SQL
+    has_zap: bool = False
+    zap_payload: str = ""
+    zap_time_delay_ms: int = 0
+    cross_validated: bool = False
+    custom_verified: bool = False
+    custom_payload: str = ""
+    custom_time_delay_sec: float = 0.0
+    evidence: str = ""
+    description: str = ""
+    solution: str = ""
+    raw_request_body: str = ""
+    raw_request_url: str = ""
+    def to_dict(self) -> dict:
+        return {
+            "method": self.method,
+            "url": self.url,
+            "param": self.param,
+            "risk": self.risk,
+            "plugin_name": self.plugin_name,
+            "injection_type": self.injection_type.value if isinstance(self.injection_type, InjectionType) else self.injection_type,
+            "cross_validated": self.cross_validated,
+            "has_zap": self.has_zap,
+            "zap_payload": self.zap_payload,
+            "zap_time_delay_ms": self.zap_time_delay_ms,
+            "custom_verified": self.custom_verified,
+            "custom_payload": self.custom_payload,
+            "custom_time_delay_sec": round(self.custom_time_delay_sec, 2),
+            "evidence": self.evidence,
+            "description": self.description,
+            "solution": self.solution,
+            "raw_request_body": self.raw_request_body,
+            "raw_request_url": self.raw_request_url
+        }

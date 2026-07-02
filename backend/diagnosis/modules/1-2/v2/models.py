@@ -1,0 +1,175 @@
+"""
+ARGUS v2 - SQL Injection Pipeline Models
+"""
+
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional
+from urllib.parse import parse_qs, urlparse
+
+
+class DetectionSource(str, Enum):
+    ZAP_ACTIVE_SCAN = "ZAP_ACTIVE_SCAN"
+    CUSTOM_INJECTOR = "CUSTOM_INJECTOR"
+
+
+class InjectionType(str, Enum):
+    SQL = "SQL"
+    COMMAND = "COMMAND"
+    NOSQL = "NOSQL"
+    SSTI = "SSTI"
+    XPATH = "XPATH"
+    XML = "XML"
+    GENERIC = "GENERIC"
+
+
+class VerificationStatus(str, Enum):
+    UNVERIFIED = "UNVERIFIED"
+    VERIFIED = "VERIFIED"
+    SUSPECTED = "SUSPECTED"
+    FALSE_POSITIVE = "FALSE_POSITIVE"
+    UNVERIFIABLE = "UNVERIFIABLE"
+    ERROR = "ERROR"
+
+
+class InputSource(str, Enum):
+    URL_LIST = "URL_LIST"
+    API_LIST = "API_LIST"
+    SWAGGER = "SWAGGER"
+
+
+class ParamLocation(str, Enum):
+    QUERY = "query"
+    PATH = "path"
+    BODY = "body"
+    HEADER = "header"
+
+
+class RiskLevel(str, Enum):
+    HIGH = "HIGH"
+    MEDIUM = "MEDIUM"
+    LOW = "LOW"
+    INFO = "INFO"
+
+
+@dataclass
+class ScanParam:
+    name: str
+    location: ParamLocation
+    required: bool = False
+    sample_value: Optional[str] = None
+    schema: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class ScanTarget:
+    method: str
+    base_url: str
+    path: str
+    params: List[ScanParam] = field(default_factory=list)
+    raw_url: Optional[str] = None
+    tags: list = field(default_factory=list)
+    allowed_roles: list = field(default_factory=list)
+    source: InputSource = InputSource.URL_LIST
+    raw: Optional[str] = None
+    content_type: str = ""
+
+    @classmethod
+    def from_raw_url(cls, raw_url: str) -> "ScanTarget":
+        parsed = urlparse(raw_url)
+        base_url = f"{parsed.scheme}://{parsed.netloc}"
+        path = parsed.path or "/"
+        if parsed.query:
+            path = f"{path}?{parsed.query}"
+        query_params = parse_qs(parsed.query, keep_blank_values=True)
+        params = [
+            ScanParam(
+                name=name,
+                location=ParamLocation.QUERY,
+                sample_value=values[0] if values else "",
+            )
+            for name, values in query_params.items()
+        ]
+        return cls(
+            method="GET",
+            base_url=base_url,
+            path=path,
+            params=params,
+            raw_url=raw_url,
+            source=InputSource.URL_LIST,
+            raw=raw_url,
+        )
+
+    @property
+    def full_url(self) -> str:
+        return f"{self.base_url.rstrip('/')}{self.path}"
+
+
+@dataclass
+class DetectionResult:
+    method: str
+    url: str
+    param: str
+    risk: str
+    plugin_name: str
+    injection_type: InjectionType = InjectionType.SQL
+    has_zap: bool = False
+    zap_payload: str = ""
+    zap_time_delay_ms: int = 0
+    cross_validated: bool = False
+    custom_verified: bool = False
+    custom_payload: str = ""
+    custom_time_delay_sec: float = 0.0
+    verification_status: VerificationStatus = VerificationStatus.UNVERIFIED
+    verification_reason: str = ""
+    evidence: str = ""
+    description: str = ""
+    solution: str = ""
+    plugin_id: str = ""
+    raw_request_body: str = ""
+    raw_request_url: str = ""
+    raw_request_headers: Dict[str, str] = field(default_factory=dict)
+    verification_methods: Dict[str, Any] = field(default_factory=dict)
+    classification: str = ""
+    confidence: str = ""
+    argus_risk: str = ""
+    related_issue: str = ""
+    why_injection: str = ""
+    risk_comment: str = ""
+    reporting_guidance: str = ""
+
+    def to_dict(self) -> dict:
+        injection_type = self.injection_type.value if isinstance(self.injection_type, InjectionType) else self.injection_type
+        status = self.verification_status.value if isinstance(self.verification_status, VerificationStatus) else self.verification_status
+        return {
+            "method": self.method,
+            "url": self.url,
+            "param": self.param,
+            "risk": self.risk,
+            "plugin_id": self.plugin_id,
+            "plugin_name": self.plugin_name,
+            "injection_type": injection_type,
+            "verification_status": status,
+            "verification_reason": self.verification_reason,
+            "cross_validated": self.cross_validated,
+            "has_zap": self.has_zap,
+            "zap_payload": self.zap_payload,
+            "zap_time_delay_ms": self.zap_time_delay_ms,
+            "custom_verified": self.custom_verified,
+            "custom_payload": self.custom_payload,
+            "custom_time_delay_sec": round(self.custom_time_delay_sec, 2),
+            "evidence": self.evidence,
+            "verification_methods": self.verification_methods,
+            "classification": self.classification,
+            "confidence": self.confidence,
+            "argus_risk": self.argus_risk,
+            "related_issue": self.related_issue,
+            "why_injection": self.why_injection,
+            "risk_comment": self.risk_comment,
+            "reporting_guidance": self.reporting_guidance,
+            "description": self.description,
+            "solution": self.solution,
+            "raw_request_body": self.raw_request_body,
+            "raw_request_url": self.raw_request_url,
+            "raw_request_headers": self.raw_request_headers,
+        }

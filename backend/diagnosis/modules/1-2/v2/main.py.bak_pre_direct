@@ -1,0 +1,136 @@
+"""
+ARGUS v2 - Injection Pipeline Main Orchestrator
+"""
+
+import argparse
+import json
+import sys
+from collections import Counter
+from datetime import datetime
+
+import requests
+
+from models import InjectionType, VerificationStatus
+from payload_injector import CommandInjector, GenericInjectionInjector, NoSqlInjector, SqliInjector, SstiInjector, XmlXPathInjector
+from zap_engine import ZapEngine
+
+
+def main():
+    parser = argparse.ArgumentParser(description="ARGUS v2 Injection Pipeline")
+    parser.add_argument("--target", required=True, help="Base Target URL (e.g., http://localhost:8080)")
+    parser.add_argument("--swagger", required=False, default="", help="Swagger JSON URL (e.g., http://localhost:8080/v3/api-docs)")
+    parser.add_argument("--jwt", required=False, default="", help="JWT Token for authentication")
+    parser.add_argument("--email", required=False, default="", help="Login email for automatic token extraction")
+    parser.add_argument("--password", required=False, default="", help="Login password")
+    parser.add_argument("--login-url", required=False, default="", help="Login endpoint URL (e.g., http://localhost:8080/api/v1/auth/login)")
+    parser.add_argument("--output-prefix", required=False, default="findings_injection", help="Output JSON filename prefix")
+    parser.add_argument(
+        "--verification-mode",
+        choices=["strict", "balanced", "aggressive"],
+        default="balanced",
+        help="strict/balanced keeps reproduced evidence only; aggressive preserves inconclusive high-risk ZAP alerts as SUSPECTED",
+    )
+
+    args = parser.parse_args()
+
+    print("==================================================")
+    print(" ARGUS v2 - Injection Pipeline Started")
+    print(f" Target : {args.target}")
+    print(f" Swagger: {args.swagger}")
+    print(f" Mode   : {args.verification_mode}")
+    print("==================================================\n")
+
+    jwt_token = args.jwt
+    if not jwt_token and args.email and args.password and args.login_url:
+        print(f"[INFO] 자동 로그인을 시도합니다: {args.login_url}")
+        try:
+            resp = requests.post(args.login_url, json={"email": args.email, "password": args.password}, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success") and data.get("data"):
+                    jwt_token = data["data"].get("accessToken", "")
+                if not jwt_token:
+                    jwt_token = resp.cookies.get("accessToken", "")
+
+                if jwt_token:
+                    print("[SUCCESS] 자동 로그인 성공! 토큰을 획득했습니다.")
+                else:
+                    print("[ERROR] 로그인 성공했으나 토큰을 찾을 수 없습니다.")
+            else:
+                print(f"[ERROR] 로그인 실패 (HTTP {resp.status_code}): {resp.text}")
+                sys.exit(1)
+        except Exception as exc:
+            print(f"[ERROR] 로그인 요청 중 예외 발생: {exc}")
+            sys.exit(1)
+
+    engine = ZapEngine()
+    engine.configure_scan(target_url=args.target, swagger_url=args.swagger, jwt_token=jwt_token)
+    zap_results = engine.run_active_scan(target_url=args.target)
+
+    if not zap_results:
+        print("[INFO] ZAP에서 발견된 Injection 의심 알림이 없습니다.")
+        return
+
+    print(f"\n[INFO] ZAP에서 총 {len(zap_results)}개의 Injection 의심 알림 발견. 정밀 검증을 시작합니다...")
+
+    injector_map = {
+        InjectionType.SQL: SqliInjector(jwt_token=jwt_token, verification_mode=args.verification_mode),
+        InjectionType.COMMAND: CommandInjector(jwt_token=jwt_token, verification_mode=args.verification_mode),
+        InjectionType.NOSQL: NoSqlInjector(jwt_token=jwt_token, verification_mode=args.verification_mode),
+        InjectionType.SSTI: SstiInjector(jwt_token=jwt_token, verification_mode=args.verification_mode),
+        InjectionType.XPATH: XmlXPathInjector(jwt_token=jwt_token, verification_mode=args.verification_mode),
+        InjectionType.XML: XmlXPathInjector(jwt_token=jwt_token, verification_mode=args.verification_mode),
+        InjectionType.GENERIC: GenericInjectionInjector(jwt_token=jwt_token, verification_mode=args.verification_mode),
+    }
+    final_results = []
+    status_counts = Counter()
+
+    for idx, result in enumerate(zap_results):
+        print(f"  [{idx + 1}/{len(zap_results)}] 검증 중: {result.method} {result.url} (Param: {result.param}) - {result.injection_type}")
+        injector = injector_map.get(result.injection_type)
+        if injector:
+            verified_result = injector.verify_zap_alert(result)
+        else:
+            reason = f"지원되지 않는 Injection 타입: {result.injection_type}"
+            print(f"   -> [검증불가] {reason}")
+            result.verification_status = VerificationStatus.UNVERIFIABLE
+            result.verification_reason = reason
+            result.evidence = reason
+            verified_result = result
+
+        final_results.append(verified_result)
+        status = verified_result.verification_status
+        status_counts[status.value if isinstance(status, VerificationStatus) else str(status)] += 1
+
+        if verified_result.verification_status == VerificationStatus.VERIFIED:
+            print("   -> [위험] 정탐(True Positive) 확인됨!")
+        elif verified_result.verification_status == VerificationStatus.SUSPECTED:
+            print(f"   -> [의심] {verified_result.verification_reason}")
+        elif verified_result.verification_status == VerificationStatus.FALSE_POSITIVE:
+            print("   -> [오탐] error/boolean/time 검증에서 증거가 확인되지 않음.")
+        elif verified_result.verification_status == VerificationStatus.UNVERIFIABLE:
+            print(f"   -> [검증불가] {verified_result.verification_reason}")
+        else:
+            print(f"   -> [{verified_result.verification_status}] {verified_result.verification_reason}")
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = f"{args.output_prefix}_{timestamp}.json"
+    output_data = [result.to_dict() for result in final_results]
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(output_data, f, ensure_ascii=False, indent=4)
+
+    print("\n==================================================")
+    print(" 스캔 및 검증 파이프라인 완료!")
+    print(f" - 전체 ZAP 의심 알림: {len(zap_results)} 건")
+    print(f" - 교차 검증된 정탐: {status_counts.get(VerificationStatus.VERIFIED.value, 0)} 건")
+    print(f" - 의심 유지: {status_counts.get(VerificationStatus.SUSPECTED.value, 0)} 건")
+    print(f" - 오탐 분류: {status_counts.get(VerificationStatus.FALSE_POSITIVE.value, 0)} 건")
+    print(f" - 검증불가: {status_counts.get(VerificationStatus.UNVERIFIABLE.value, 0)} 건")
+    print(f" - 검증 오류: {status_counts.get(VerificationStatus.ERROR.value, 0)} 건")
+    print(f" - 결과 파일 저장됨: {output_file}")
+    print("==================================================")
+
+
+if __name__ == "__main__":
+    main()

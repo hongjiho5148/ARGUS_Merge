@@ -1,0 +1,107 @@
+"""
+ARGUS v2 - SQL Injection Pipeline Main Orchestrator
+"""
+
+import argparse
+import json
+import sys
+import requests
+from datetime import datetime
+from zap_engine import ZapEngine
+from payload_injector import BaseInjector, SqliInjector, CommandInjector
+from models import InjectionType
+
+def main():
+    parser = argparse.ArgumentParser(description="ARGUS v2 SQL Injection Pipeline")
+    parser.add_argument("--target", required=True, help="Base Target URL (e.g., http://localhost:8080)")
+    parser.add_argument("--swagger", required=False, default="", help="Swagger JSON URL (e.g., http://localhost:8080/v3/api-docs)")
+    parser.add_argument("--jwt", required=False, default="", help="JWT Token for authentication")
+    parser.add_argument("--email", required=False, default="", help="Login email for automatic token extraction")
+    parser.add_argument("--password", required=False, default="", help="Login password")
+    parser.add_argument("--login-url", required=False, default="", help="Login endpoint URL (e.g., http://localhost:8080/api/v1/auth/login)")
+    
+    args = parser.parse_args()
+    
+    print("==================================================")
+    print(" ARGUS v2 - SQL Injection Pipeline Started")
+    print(f" Target : {args.target}")
+    print(f" Swagger: {args.swagger}")
+    print("==================================================\n")
+    
+    jwt_token = args.jwt
+    if not jwt_token and args.email and args.password and args.login_url:
+        print(f"[INFO] 자동 로그인을 시도합니다: {args.login_url}")
+        try:
+            resp = requests.post(args.login_url, json={"email": args.email, "password": args.password}, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                if data.get("success") and data.get("data"):
+                    jwt_token = data["data"].get("accessToken", "")
+                if not jwt_token:
+                    jwt_token = resp.cookies.get("accessToken", "")
+                
+                if jwt_token:
+                    print("[SUCCESS] 자동 로그인 성공! 토큰을 획득했습니다.")
+                else:
+                    print("[ERROR] 로그인 성공했으나 토큰을 찾을 수 없습니다.")
+            else:
+                print(f"[ERROR] 로그인 실패 (HTTP {resp.status_code}): {resp.text}")
+                sys.exit(1)
+        except Exception as e:
+            print(f"[ERROR] 로그인 요청 중 예외 발생: {e}")
+            sys.exit(1)
+
+    # 1. ZAP Active Scan
+    engine = ZapEngine()
+    engine.configure_scan(target_url=args.target, swagger_url=args.swagger, jwt_token=jwt_token)
+    zap_results = engine.run_active_scan(target_url=args.target)
+    
+    if not zap_results:
+        print("[INFO] ZAP에서 발견된 SQL Injection 취약점이 없습니다.")
+        return
+        
+    print(f"\n[INFO] ZAP에서 총 {len(zap_results)}개의 의심 취약점 발견. 정밀 검증을 시작합니다...")
+    
+    # 2. Payload Injection (Cross Validation)
+    INJECTOR_MAP = {
+        InjectionType.SQL: SqliInjector(jwt_token=jwt_token),
+        InjectionType.COMMAND: CommandInjector(jwt_token=jwt_token),
+    }
+    final_results = []
+    
+    confirmed_count = 0
+    for idx, res in enumerate(zap_results):
+        print(f"  [{idx+1}/{len(zap_results)}] 검증 중: {res.method} {res.url} (Param: {res.param}) - {res.injection_type}")
+        injector = INJECTOR_MAP.get(res.injection_type)
+        if injector:
+            verified_res = injector.verify_zap_alert(res)
+        else:
+            print(f"   -> ⚠️ 지원되지 않는 Injection 타입: {res.injection_type}. 교차 검증 생략.")
+            verified_res = res
+            
+        final_results.append(verified_res)
+        if verified_res.cross_validated:
+            print("   -> 🚨 [위험] 정탐(True Positive) 확인됨!")
+            confirmed_count += 1
+        else:
+            print("   -> 🟢 [안전] 오탐(False Positive)으로 필터링됨.")
+            
+    # 3. Output
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    output_file = f"findings_sqli_{timestamp}.json"
+    
+    output_data = [r.to_dict() for r in final_results]
+    
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(output_data, f, ensure_ascii=False, indent=4)
+        
+    print("\n==================================================")
+    print(" 스캔 및 검증 파이프라인 완료!")
+    print(f" - 전체 ZAP 의심 알림: {len(zap_results)} 건")
+    print(f" - 교차 검증된 정탐: {confirmed_count} 건")
+    print(f" - 오탐 필터링됨: {len(zap_results) - confirmed_count} 건")
+    print(f" - 결과 파일 저장됨: {output_file}")
+    print("==================================================")
+
+if __name__ == "__main__":
+    main()
