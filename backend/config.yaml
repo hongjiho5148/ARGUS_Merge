@@ -58,8 +58,12 @@ diagnosis_1_6:
   skip_selenium: true
   timeout_sec: 36000
   max_report_findings: 50
+  # Admin login is served by the main auth server on 8080
+  # (/api/v1/auth/admin/login). 8081 hosts only admin resource APIs and has no
+  # login route, so pointing admin re-login at 8081 returns HTTP 500
+  # ("No static resource") and traps the scan in an endless re-login retry loop.
   role_login_targets:
-    admin: "http://localhost:8081"
+    admin: "http://localhost:8080"
   role_login_paths:
     admin: "/api/v1/auth/admin/login"
 

@@ -64,8 +64,12 @@ diagnosis_1_6:
   skip_selenium: true
   timeout_sec: 36000
   max_report_findings: 50
+  # Admin authentication is served by the main auth server on 8080
+  # (/api/v1/auth/admin/login); 8081 only hosts admin resource APIs and has no
+  # login route ("No static resource"), which caused an endless admin re-login
+  # retry loop that stalled the scan before it could finish.
   role_login_targets:
-    admin: "http://host.docker.internal:8081"
+    admin: "http://host.docker.internal:8080"
   role_login_paths:
     admin: "/api/v1/auth/admin/login"
 
