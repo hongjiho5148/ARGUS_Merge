@@ -17,6 +17,7 @@ import { G72FindingsPanel } from "./G72FindingsPanel";
 import { G73FindingsPanel } from "./G73FindingsPanel";
 import { G74FindingsPanel } from "./G74FindingsPanel";
 
+
 const STATUS_STYLES: Record<string, string> = {
   pass: "border-emerald-400/50 bg-emerald-500/10 text-emerald-300",
   warn: "border-amber-400/50 bg-amber-500/10 text-amber-300",
@@ -324,12 +325,9 @@ function FindingListItem({
           >
             {f.severity}
           </span>
-          {/* Staging에서 추가된 1-2 뱃지 유지 */}
           {sectionId === "1-2" ? <G12InjectionSignalBadge evidence={f.evidence} /> : null}
           <span className="text-xs text-white/90">{f.message}</span>
         </div>
-        
-        {/* 우리가 만든 토글 버튼 유지 */}
         {hasEvidence && (
           <button
             type="button"
@@ -340,8 +338,6 @@ function FindingListItem({
           </button>
         )}
       </div>
-      
-      {/* 두 브랜치의 로직 통합: 토글 상태 확인 + sectionId 넘겨주기 */}
       {showDetails && hasEvidence ? (
         <FindingEvidence evidence={f.evidence!} sectionId={sectionId} />
       ) : null}
