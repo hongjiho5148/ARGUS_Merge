@@ -4,16 +4,28 @@ ARGUS v2 - SQL Injection ZAP Engine (from feature/injection-scan — rules uncha
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import re
 import time
+from pathlib import Path
 from typing import Dict, List, Tuple
 from urllib.parse import urlparse
 
 import requests
 from zapv2 import ZAPv2
 
-from models import DetectionResult, InjectionType
+try:
+    from .models import DetectionResult, InjectionType
+except ImportError:
+    _models_path = Path(__file__).with_name("models.py")
+    _spec = importlib.util.spec_from_file_location("diag_g12_models", _models_path)
+    if _spec is None or _spec.loader is None:
+        raise
+    _models = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(_models)
+    DetectionResult = _models.DetectionResult
+    InjectionType = _models.InjectionType
 
 
 class ZapEngine:

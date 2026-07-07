@@ -32,7 +32,6 @@ def test_login_urls_for_account_uses_successful_only():
 
 
 def test_login_urls_retries_all_when_report_contains_only_failures():
-def test_login_urls_retries_all_when_report_contains_only_failures():
     entries = [
         {"url": "http://x/api/v1/auth/login"},
         {"url": "http://x/api/v1/auth/admin/login"},

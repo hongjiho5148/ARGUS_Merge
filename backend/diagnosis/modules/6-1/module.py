@@ -31,7 +31,7 @@ class G61Module(DiagnosisModule):
     title = "오류페이지를 통한 정보 노출 여부"
     chapter = 6
     implemented = True
-    engine = "httpx"
+    engine = "httpx+zap"
 
     def __init__(self, module_dir: Path) -> None:
         self.module_dir = module_dir

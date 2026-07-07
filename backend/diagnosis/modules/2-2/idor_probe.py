@@ -357,6 +357,8 @@ def run_idor_probes(
         ep_accounts = _distinct_accounts(
             filter_sessions_for_endpoint(ep, account_auths, login_report)
         )
+        if login_report is None and len(ep_accounts) < 2:
+            ep_accounts = accounts
         if len(ep_accounts) < 2:
             continue
         owner = ep_accounts[0]

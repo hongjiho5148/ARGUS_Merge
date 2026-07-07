@@ -2,4 +2,4 @@ id: "6-1"
 title: "오류페이지를 통한 정보 노출 여부"
 chapter: 6
 implemented: true
-engine: httpx
+engine: httpx+zap

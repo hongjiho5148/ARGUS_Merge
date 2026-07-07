@@ -2,16 +2,36 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 from collections import Counter
+from pathlib import Path
 from typing import Any, Iterable
 from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import requests
 
 from app.services.zap_util import probe_url
-from models import DetectionResult, InjectionType, ScanParam, ScanTarget, VerificationStatus
-from sample_values import alternate_samples, is_generic_sample
+try:
+    from .models import DetectionResult, InjectionType, ScanParam, ScanTarget, VerificationStatus
+    from .sample_values import alternate_samples, is_generic_sample
+except ImportError:
+    _module_dir = Path(__file__).resolve().parent
+    _models_spec = importlib.util.spec_from_file_location("diag_g12_models", _module_dir / "models.py")
+    _samples_spec = importlib.util.spec_from_file_location("diag_g12_sample_values", _module_dir / "sample_values.py")
+    if _models_spec is None or _models_spec.loader is None or _samples_spec is None or _samples_spec.loader is None:
+        raise
+    _models = importlib.util.module_from_spec(_models_spec)
+    _models_spec.loader.exec_module(_models)
+    _samples = importlib.util.module_from_spec(_samples_spec)
+    _samples_spec.loader.exec_module(_samples)
+    DetectionResult = _models.DetectionResult
+    InjectionType = _models.InjectionType
+    ScanParam = _models.ScanParam
+    ScanTarget = _models.ScanTarget
+    VerificationStatus = _models.VerificationStatus
+    alternate_samples = _samples.alternate_samples
+    is_generic_sample = _samples.is_generic_sample
 
 UNSAFE_METHODS = {"DELETE", "PATCH"}
 DEFAULT_TYPES = (

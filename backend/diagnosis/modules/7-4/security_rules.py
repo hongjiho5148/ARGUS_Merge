@@ -177,7 +177,7 @@ def scan_response_security(
                 header_value=xxp,
             )
         )
-    elif rules.strict and not xxp:
+    elif rules.strict and not xxp and not h.get("content-security-policy"):
         issues.append(
             SecurityIssue(
                 check_type="missing_xxss_protection",

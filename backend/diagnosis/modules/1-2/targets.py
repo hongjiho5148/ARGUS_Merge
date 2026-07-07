@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -11,8 +12,24 @@ from diagnosis.replay.normalize import FRONTEND_PORTS, filter_endpoints_by_probe
 from inventory.load import load_api_tree
 from inventory.schema import Endpoint, InputParam
 
-from models import InputSource, ParamLocation, ScanParam, ScanTarget
-from sample_values import pick_sample_value
+try:
+    from .models import InputSource, ParamLocation, ScanParam, ScanTarget
+    from .sample_values import pick_sample_value
+except ImportError:
+    _module_dir = Path(__file__).resolve().parent
+    _models_spec = importlib.util.spec_from_file_location("diag_g12_models", _module_dir / "models.py")
+    _samples_spec = importlib.util.spec_from_file_location("diag_g12_sample_values", _module_dir / "sample_values.py")
+    if _models_spec is None or _models_spec.loader is None or _samples_spec is None or _samples_spec.loader is None:
+        raise
+    _models = importlib.util.module_from_spec(_models_spec)
+    _models_spec.loader.exec_module(_models)
+    _samples = importlib.util.module_from_spec(_samples_spec)
+    _samples_spec.loader.exec_module(_samples)
+    InputSource = _models.InputSource
+    ParamLocation = _models.ParamLocation
+    ScanParam = _models.ScanParam
+    ScanTarget = _models.ScanTarget
+    pick_sample_value = _samples.pick_sample_value
 
 _LOCATION_MAP = {
     "query": ParamLocation.QUERY,

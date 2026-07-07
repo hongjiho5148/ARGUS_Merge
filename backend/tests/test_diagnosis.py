@@ -115,7 +115,7 @@ def test_g61_module_implemented():
     mod = diagnosis_service.catalog()
     row = next(r for r in mod if r["id"] == "6-1")
     assert row["implemented"] is True
-    assert row["engine"] == "httpx"
+    assert row["engine"] == "httpx+zap"
 
 
 def test_g35_module_implemented():
