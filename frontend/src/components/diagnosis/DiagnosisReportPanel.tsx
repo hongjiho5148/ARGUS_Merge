@@ -1,21 +1,6 @@
 import { useState } from "react";
 import { ChevronDown, Terminal, Copy } from "lucide-react"; // 💡 Terminal, Copy 추가
 import type { DiagnosisSectionReport } from "../../types";
-import { G15FindingsPanel } from "./G15FindingsPanel";
-import { G22FindingsPanel } from "./G22FindingsPanel";
-import { G32FindingsPanel } from "./G32FindingsPanel";
-import { G34FindingsPanel } from "./G34FindingsPanel";
-import { G35FindingsPanel } from "./G35FindingsPanel";
-import { G36FindingsPanel } from "./G36FindingsPanel";
-import { G42FindingsPanel } from "./G42FindingsPanel";
-import { G45FindingsPanel } from "./G45FindingsPanel";
-import { G52FindingsPanel } from "./G52FindingsPanel";
-import { G61FindingsPanel } from "./G61FindingsPanel";
-import { G62FindingsPanel } from "./G62FindingsPanel";
-import { G71FindingsPanel } from "./G71FindingsPanel";
-import { G72FindingsPanel } from "./G72FindingsPanel";
-import { G73FindingsPanel } from "./G73FindingsPanel";
-import { G74FindingsPanel } from "./G74FindingsPanel";
 
 
 const STATUS_STYLES: Record<string, string> = {
@@ -54,8 +39,6 @@ function FindingEvidence({
   sectionId: string;
 }) {
   const rows: { label: string; value: string }[] = [];
-  const blocks: { label: string; value: string }[] = [];
-
   const add = (label: string, key: string) => {
     const v = evidence[key];
     if (v !== undefined && v !== null && v !== "") {
@@ -63,22 +46,11 @@ function FindingEvidence({
     }
   };
 
-  const addBlock = (label: string, key: string) => {
-    const v = evidence[key];
-    if (v !== undefined && v !== null && v !== "") {
-      blocks.push({ label, value: String(v) });
-    }
-  };
-
   add("Login URL", "login_url");
   add("Login label", "login_label");
   add("Probe mode", "probe_mode");
   add("Reason", "reason");
-  add("Matched regex", "matched_regex");
-  add("Found param", "found_param");
-  add("Value prefix", "value_prefix");
-  add("Param format", "param_format");
-  add("Action URL", "action_url");
+  add("Remediation", "remediation");
 
   const scenarioA = evidence.scenario_a as Record<string, unknown> | undefined;
   if (scenarioA) {
@@ -126,23 +98,6 @@ function FindingEvidence({
   add("Param", "param");
   add("Param in", "param_in");
   add("Payload", "payload");
-  add("Attack", "attack");
-  add("Affected Parameters", "affected_parameters");
-  add("Writer Role", "cross_account_writer_role");
-  add("Reader Role", "cross_account_reader_role");
-  
-  // Specific blocks for 1-1 from latest.yaml
-  addBlock("Vulnerability Description", "vuln_description");
-  addBlock("Validation Reason", "validation_reason");
-  addBlock("Description", "description");
-  addBlock("Remediation Summary", "remediation_summary");
-  addBlock("Remediation Cause", "remediation_cause");
-  addBlock("Remediation Guide", "remediation_guide");
-  addBlock("Remediation Code", "remediation_code");
-  addBlock("Evidence Request", "evidence_request");
-  addBlock("Evidence Response", "evidence_response");
-  addBlock("Evidence", "evidence");
-
   add("Payloads tried", "payloads_tried_count");
   add("HTTP", "http_status");
   add("Baseline HTTP", "baseline_http_status");
@@ -203,6 +158,8 @@ function FindingEvidence({
     });
   }
 
+  if (rows.length === 0) return null;
+
   const leak = evidence.payload_leak_markers;
   if (Array.isArray(leak) && leak.length > 0) {
     rows.push({ label: "Payload leak markers", value: leak.map(String).join("; ") });
@@ -212,33 +169,15 @@ function FindingEvidence({
     rows.push({ label: "Sensitive markers", value: sensitive.map(String).join("; ") });
   }
 
-  if (rows.length === 0 && blocks.length === 0) return null;
-
   return (
-    <div className="mt-2 space-y-3 border-t border-cyber-border/20 pt-2 text-[10px]">
-      {rows.length > 0 && (
-        <dl className="space-y-1">
-          {rows.map(({ label, value }) => (
-            <div key={label} className="grid grid-cols-[7rem_1fr] gap-2">
-              <dt className="text-cyber-muted font-medium">{label}</dt>
-              <dd className="break-all font-mono text-cyan-300/80">{value}</dd>
-            </div>
-          ))}
-        </dl>
-      )}
-      {blocks.length > 0 && (
-        <div className="space-y-3 mt-4 border-t border-cyber-border/10 pt-3">
-          {blocks.map(({ label, value }) => (
-            <div key={label} className="flex flex-col gap-1.5">
-              <span className="text-cyber-muted font-semibold border-b border-cyber-border/20 pb-0.5">{label}</span>
-              <pre className="whitespace-pre-wrap break-all font-mono text-[10.5px] text-cyan-200/90 bg-cyber-bg/50 p-2.5 rounded border border-cyber-border/30 overflow-x-auto max-h-80 overflow-y-auto">
-                {value}
-              </pre>
-            </div>
-          ))}
+    <dl className="mt-2 space-y-1 border-t border-cyber-border/20 pt-2 text-[10px]">
+      {rows.map(({ label, value }) => (
+        <div key={label} className="grid grid-cols-[7rem_1fr] gap-2">
+          <dt className="text-cyber-muted">{label}</dt>
+          <dd className="break-all font-mono text-cyan-300/80">{value}</dd>
         </div>
-      )}
-    </div>
+      ))}
+    </dl>
   );
 }
 
@@ -313,33 +252,19 @@ function FindingListItem({
   f: { severity: string; message: string; evidence?: Record<string, unknown> };
   sectionId: string;
 }) {
-  const [showDetails, setShowDetails] = useState(false);
-  const hasEvidence = f.evidence && Object.keys(f.evidence).length > 0;
-
   return (
     <li className="rounded border border-cyber-border/30 bg-cyber-panel/30 px-3 py-2">
-      <div className="flex items-start justify-between gap-2">
-        <div className="flex items-start gap-2">
-          <span
-            className={`shrink-0 font-mono text-[10px] uppercase ${SEVERITY_STYLES[f.severity] ?? SEVERITY_STYLES.info}`}
-          >
-            {f.severity}
-          </span>
-          {sectionId === "1-2" ? <G12InjectionSignalBadge evidence={f.evidence} /> : null}
-          <span className="text-xs text-white/90">{f.message}</span>
-        </div>
-        {hasEvidence && (
-          <button
-            type="button"
-            onClick={() => setShowDetails(!showDetails)}
-            className="shrink-0 rounded border border-cyber-border/60 bg-cyber-bg px-2 py-0.5 text-[10px] text-cyber-muted hover:text-cyan-300 transition"
-          >
-            {showDetails ? "접기" : "상세 보기"}
-          </button>
-        )}
+      <div className="flex items-start gap-2">
+        <span
+          className={`shrink-0 font-mono text-[10px] uppercase ${SEVERITY_STYLES[f.severity] ?? SEVERITY_STYLES.info}`}
+        >
+          {f.severity}
+        </span>
+        {sectionId === "1-2" ? <G12InjectionSignalBadge evidence={f.evidence} /> : null}
+        <span className="text-xs text-white/90">{f.message}</span>
       </div>
-      {showDetails && hasEvidence ? (
-        <FindingEvidence evidence={f.evidence!} sectionId={sectionId} />
+      {f.evidence && Object.keys(f.evidence).length > 0 ? (
+        <FindingEvidence evidence={f.evidence} sectionId={sectionId} />
       ) : null}
     </li>
   );
@@ -740,7 +665,6 @@ export function DiagnosisReportPanel({ report }: { report: DiagnosisSectionRepor
   const isG15Stats = statsFinding?.message === "1-5 scan statistics";
   const isG41Stats = statsFinding?.message === "4-1 scan statistics";
   const isG42Stats = statsFinding?.message === "4-2 scan statistics";
-  const isG45Stats = statsFinding?.message === "4-5 scan statistics";
   const isG22Stats = statsFinding?.message === "2-2 scan statistics";
   const isG71Stats = statsFinding?.message === "7-1 scan statistics";
   const isG72Stats = statsFinding?.message === "7-2 scan statistics";
@@ -919,15 +843,6 @@ export function DiagnosisReportPanel({ report }: { report: DiagnosisSectionRepor
               ) : null}
               {typeof stats.duplicate_login_ip_findings === "number" ? (
                 <span> · cross-IP login {stats.duplicate_login_ip_findings}</span>
-              ) : null}
-            </>
-          ) : null}
-          {isG45Stats ? (
-            <>
-              API endpoints{" "}
-              <span className="font-mono text-cyan-300/90">{String(stats.scanned_endpoints ?? "—")}</span>
-              {typeof stats.admin_endpoints === "number" ? (
-                <span> · tested endpoints {stats.admin_endpoints}</span>
               ) : null}
             </>
           ) : null}
@@ -1365,36 +1280,6 @@ export function DiagnosisReportPanel({ report }: { report: DiagnosisSectionRepor
 
       {findings.length === 0 ? (
         <p className="text-xs text-cyber-muted">finding 없음</p>
-      ) : report.section_id === "1-5" ? (
-        <G15FindingsPanel findings={findings} />
-      ) : report.section_id === "2-2" ? (
-        <G22FindingsPanel findings={findings} />
-      ) : report.section_id === "3-2" ? (
-        <G32FindingsPanel findings={findings} stats={stats} />
-      ) : report.section_id === "3-4" ? (
-        <G34FindingsPanel findings={findings} stats={stats} status={report.status} />
-      ) : report.section_id === "3-5" ? (
-        <G35FindingsPanel findings={findings} stats={stats} />
-      ) : report.section_id === "3-6" ? (
-        <G36FindingsPanel findings={findings} stats={stats} status={report.status} />
-      ) : report.section_id === "4-2" ? (
-        <G42FindingsPanel findings={findings} />
-      ) : report.section_id === "4-5" ? (
-        <G45FindingsPanel findings={findings} />
-      ) : report.section_id === "5-2" ? (
-        <G52FindingsPanel findings={findings} stats={stats} />
-      ) : report.section_id === "6-1" && report.g61_summary ? (
-        <G61FindingsPanel summary={report.g61_summary} status={report.status} />
-      ) : report.section_id === "6-2" ? (
-        <G62FindingsPanel findings={findings} />
-      ) : report.section_id === "7-1" ? (
-        <G71FindingsPanel findings={findings} />
-      ) : report.section_id === "7-2" ? (
-        <G72FindingsPanel findings={findings} />
-      ) : report.section_id === "7-3" ? (
-        <G73FindingsPanel findings={findings} />
-      ) : report.section_id === "7-4" ? (
-        <G74FindingsPanel findings={findings} />
       ) : (
         <GroupedFindingsPanel findings={findings} sectionId={report.section_id} />
       )}

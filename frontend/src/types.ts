@@ -255,33 +255,6 @@ export interface SaveLoginEndpointsResponse {
   message: string;
 }
 
-export interface TransferEndpointEntry {
-  id: string;
-  url: string;
-  method: string;
-}
-
-export interface TransferEndpointResolved {
-  url: string;
-  label: string;
-  source: string;
-  method: string;
-  path?: string;
-  base_url?: string;
-}
-
-export interface TransferEndpointsResponse {
-  endpoints: TransferEndpointEntry[];
-  resolved: TransferEndpointResolved[];
-}
-
-export interface SaveTransferEndpointsResponse {
-  ok: boolean;
-  endpoints: TransferEndpointEntry[];
-  resolved: TransferEndpointResolved[];
-  message: string;
-}
-
 export type InventoryView = "ready" | "verified";
 export type VerifyOutcome = "final" | "discovered" | "rejected";
 
@@ -317,54 +290,11 @@ export interface DiagnosisSectionReport {
   message: string;
   checked_at: string | null;
   findings: DiagnosisFindingSummary[];
-  g61_summary?: G61ReportSummary | null;
-}
-
-export type G61SkClass = "http" | "exception" | "dbms";
-
-export interface G61SummaryGroup {
-  group_key: string;
-  severity: string;
-  sk_class: G61SkClass;
-  sk_label: string;
-  category: string;
-  rule_id: string;
-  category_label: string;
-  rule_label: string;
-  explanation: string;
-  origin: string;
-  engine: string;
-  engines?: string[];
-  count: number;
-  sample_urls: string[];
-  sample_methods: string[];
-  sample_snippets: string[];
-  remediation: string | null;
-  trigger_families: { family: string; count: number }[];
-  top_status_codes: string[];
-}
-
-export interface G61ReportSummary {
-  total_issues: number;
-  by_severity: Record<string, number>;
-  by_sk: Record<string, number>;
-  by_category: Record<string, number>;
-  by_trigger_family: Record<string, number>;
-  by_origin: {
-    origin: string;
-    count: number;
-    sk: Record<string, number>;
-    categories: Record<string, number>;
-  }[];
-  groups: G61SummaryGroup[];
-  stats?: Record<string, unknown> | null;
 }
 
 export interface DiagnosisRunSectionResponse {
   ok: boolean;
-  accepted?: boolean;
-  async_run?: boolean;
-  report?: DiagnosisSectionReport | null;
+  report: DiagnosisSectionReport;
 }
 
 export interface DiagnosisG15RunOptionsPayload {
@@ -398,7 +328,6 @@ export interface DiagnosisG22RunOptionsPayload {
   zap_enabled?: boolean;
   idor_probe_enabled?: boolean;
   scan_all_inventory?: boolean;
-  dashboard_download_only?: boolean;
   max_candidates?: number;
   zap_max_minutes?: number;
 }
@@ -431,6 +360,12 @@ export interface DiagnosisG61RunOptionsPayload {
   max_requests?: number;
   timeout?: number;
   interval_sec?: number;
+  zap_enabled?: boolean;
+  zap_unified_enabled?: boolean;
+  zap_supplemental_enabled?: boolean;
+  zap_max_requests?: number;
+  zap_max_minutes?: number;
+  zap_seed_cap?: number;
   httpx_enabled?: boolean;
 }
 
@@ -511,15 +446,6 @@ export interface DiagnosisG42RunOptionsPayload {
   probe_account_email?: string;
 }
 
-export interface DiagnosisG21RunOptionsPayload {
-  seller_email?: string;
-  seller_password?: string;
-  seller_id?: number;
-  user_email?: string;
-  user_password?: string;
-  timeout?: number;
-}
-
 export interface DiagnosisG41RunOptionsPayload {
   probe_mode?: "base_only" | "sample" | "full";
   sample_size?: number;
@@ -536,7 +462,6 @@ export interface DiagnosisG41RunOptionsPayload {
 export interface DiagnosisRunSectionRequest {
   g12?: DiagnosisG12RunOptionsPayload;
   g15?: DiagnosisG15RunOptionsPayload;
-  g21?: DiagnosisG21RunOptionsPayload;
   g41?: DiagnosisG41RunOptionsPayload;
   g22?: DiagnosisG22RunOptionsPayload;
   g32?: DiagnosisG32RunOptionsPayload;

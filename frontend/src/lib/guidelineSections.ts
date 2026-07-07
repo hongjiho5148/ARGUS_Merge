@@ -3,16 +3,10 @@ export interface GuidelineSection {
   id: string;
   title: string;
   chapter: number;
-  description?: string;
 }
 
 export const GUIDELINE_SECTIONS: GuidelineSection[] = [
-  { 
-    id: "1-1", 
-    title: "XSS / CSRF 공격 가능성", 
-    chapter: 1, 
-    description: "• XSS (교차 사이트 스크립팅)\n  공격자가 웹 페이지에 악성 스크립트를 삽입하여, 다른 사용자가 해당 페이지를 열람할 때 브라우저에서 스크립트가 실행되도록 하는 취약점입니다. 주로 세션 쿠키 탈취나 권한 도용에 악용됩니다.\n\n• CSRF (교차 사이트 요청 위조)\n  사용자가 자신의 의지와는 무관하게, 공격자가 의도한 특정 요청(수정, 삭제 등)을 웹 서버로 전송하게 만드는 취약점입니다. 사용자가 이미 인증된 상태(로그인 상태)일 때 피해가 발생합니다." 
-  },
+  { id: "1-1", title: "XSS / CSRF 공격 가능성", chapter: 1 },
   { id: "1-2", title: "삽입(Injection) 공격 가능성", chapter: 1 },
   { id: "1-3", title: "파라미터 값 및 히든(Hidden) 필드 조작 가능성", chapter: 1 },
   { id: "1-4", title: "SSRF / File Inclusion 공격 가능성", chapter: 1 },
@@ -30,7 +24,7 @@ export const GUIDELINE_SECTIONS: GuidelineSection[] = [
   { id: "4-2", title: "인증(세션 및 토큰) 값 안전성 설정 여부", chapter: 4 },
   { id: "4-3", title: "접근제어 우회 가능성 확인", chapter: 4 },
   { id: "4-4", title: "비인증 상태로 중요 page접근 가능성", chapter: 4 },
-  { id: "4-5", title: "일반계정 권한 상승 가능성", chapter: 4, description: "자동 진단(IDOR, 권한 덮어쓰기) 지원 모듈입니다. 진단을 위해 최소 2개의 일반 권한(USER) 계정이 필요하며, 결과는 보조 자료로 활용해야 합니다." },
+  { id: "4-5", title: "일반계정 권한 상승 가능성", chapter: 4 },
   { id: "5-1", title: "소스코드 내 주요정보 노출 여부", chapter: 5 },
   { id: "5-2", title: "요청 및 응답 값 내 주요정보 포함여부 확인", chapter: 5 },
   { id: "6-1", title: "오류페이지를 통한 정보 노출 여부", chapter: 6 },

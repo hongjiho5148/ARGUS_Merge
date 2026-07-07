@@ -3,11 +3,9 @@ import {
   ChevronDown,
   Crosshair,
   Database,
-  Download,
   RefreshCw,
   ShieldCheck,
   Stethoscope,
-  Upload,
 } from "lucide-react";
 import argusLogo from "./assets/argus_logo.png";
 import { BuildSourcePanel } from "./components/BuildSourcePanel";
@@ -29,12 +27,6 @@ import {
   createEmptyLoginEndpoint,
 } from "./components/LoginEndpointsPanel";
 import type { SavedLoginEndpointsSnapshot } from "./components/LoginEndpointsPanel";
-import {
-  TransferEndpointsPanel,
-  buildSavedTransferEndpointsSnapshot,
-  createEmptyTransferEndpoint,
-} from "./components/TransferEndpointsPanel";
-import type { SavedTransferEndpointsSnapshot } from "./components/TransferEndpointsPanel";
 import { LoginEntriesPanel } from "./components/LoginEntriesPanel";
 import { VerifyResultsPanel } from "./components/VerifyResultsPanel";
 import { VerifyStartDialog } from "./components/VerifyStartDialog";
@@ -52,14 +44,10 @@ import {
   fetchStats,
   fetchTestAccounts,
   fetchLoginEndpoints,
-  fetchUploadEndpoints,
-  fetchDownloadEndpoints,
   fetchLoginEntryReport,
   fetchVerifyReport,
   saveBaseUrls,
   saveLoginEndpoints,
-  saveUploadEndpoints,
-  saveDownloadEndpoints,
   saveTestAccounts,
   verifyInventory,
 } from "./lib/api";
@@ -77,8 +65,6 @@ import type {
   VerifyOutcome,
   LoginEndpointEntry,
   LoginEndpointResolved,
-  TransferEndpointEntry,
-  TransferEndpointResolved,
   LoginEntryReportResponse,
 } from "./types";
 
@@ -171,22 +157,6 @@ function App() {
     useState<SavedLoginEndpointsSnapshot>({});
   const [savingLoginEndpoints, setSavingLoginEndpoints] = useState(false);
   const [loginEndpointSaveError, setLoginEndpointSaveError] = useState("");
-  const [uploadEndpoints, setUploadEndpoints] = useState<TransferEndpointEntry[]>([]);
-  const [resolvedUploadEndpoints, setResolvedUploadEndpoints] = useState<TransferEndpointResolved[]>(
-    [],
-  );
-  const [savedUploadEndpointsSnapshot, setSavedUploadEndpointsSnapshot] =
-    useState<SavedTransferEndpointsSnapshot>({});
-  const [savingUploadEndpoints, setSavingUploadEndpoints] = useState(false);
-  const [uploadEndpointSaveError, setUploadEndpointSaveError] = useState("");
-  const [downloadEndpoints, setDownloadEndpoints] = useState<TransferEndpointEntry[]>([]);
-  const [resolvedDownloadEndpoints, setResolvedDownloadEndpoints] = useState<
-    TransferEndpointResolved[]
-  >([]);
-  const [savedDownloadEndpointsSnapshot, setSavedDownloadEndpointsSnapshot] =
-    useState<SavedTransferEndpointsSnapshot>({});
-  const [savingDownloadEndpoints, setSavingDownloadEndpoints] = useState(false);
-  const [downloadEndpointSaveError, setDownloadEndpointSaveError] = useState("");
   const [online, setOnline] = useState<boolean | null>(null);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
@@ -323,20 +293,6 @@ function App() {
         setSavedLoginEndpointsSnapshot(buildSavedLoginEndpointsSnapshot(res.endpoints));
       })
       .catch(() => {});
-    fetchUploadEndpoints()
-      .then((res) => {
-        setUploadEndpoints(res.endpoints);
-        setResolvedUploadEndpoints(res.resolved);
-        setSavedUploadEndpointsSnapshot(buildSavedTransferEndpointsSnapshot(res.endpoints));
-      })
-      .catch(() => {});
-    fetchDownloadEndpoints()
-      .then((res) => {
-        setDownloadEndpoints(res.endpoints);
-        setResolvedDownloadEndpoints(res.resolved);
-        setSavedDownloadEndpointsSnapshot(buildSavedTransferEndpointsSnapshot(res.endpoints));
-      })
-      .catch(() => {});
     fetchBaseUrls()
       .then((res) => {
         setBaseUrls(res.urls);
@@ -438,74 +394,6 @@ function App() {
       );
     } finally {
       setSavingLoginEndpoints(false);
-    }
-  };
-
-  const handleAddUploadEndpoint = () => {
-    setUploadEndpointSaveError("");
-    setUploadEndpoints((prev) => [...prev, createEmptyTransferEndpoint("POST")]);
-  };
-
-  const handleUploadEndpointChange = (id: string, field: "url" | "method", value: string) => {
-    setUploadEndpointSaveError("");
-    setUploadEndpoints((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)),
-    );
-  };
-
-  const handleRemoveUploadEndpoint = (id: string) => {
-    setUploadEndpointSaveError("");
-    setUploadEndpoints((prev) => prev.filter((e) => e.id !== id));
-  };
-
-  const handleSaveUploadEndpoints = async () => {
-    setSavingUploadEndpoints(true);
-    setUploadEndpointSaveError("");
-    try {
-      const res = await saveUploadEndpoints(uploadEndpoints);
-      setUploadEndpoints(res.endpoints);
-      setResolvedUploadEndpoints(res.resolved);
-      setSavedUploadEndpointsSnapshot(buildSavedTransferEndpointsSnapshot(res.endpoints));
-    } catch (e) {
-      setUploadEndpointSaveError(
-        e instanceof Error ? e.message : "Upload Endpoints 저장에 실패했습니다.",
-      );
-    } finally {
-      setSavingUploadEndpoints(false);
-    }
-  };
-
-  const handleAddDownloadEndpoint = () => {
-    setDownloadEndpointSaveError("");
-    setDownloadEndpoints((prev) => [...prev, createEmptyTransferEndpoint("GET")]);
-  };
-
-  const handleDownloadEndpointChange = (id: string, field: "url" | "method", value: string) => {
-    setDownloadEndpointSaveError("");
-    setDownloadEndpoints((prev) =>
-      prev.map((e) => (e.id === id ? { ...e, [field]: value } : e)),
-    );
-  };
-
-  const handleRemoveDownloadEndpoint = (id: string) => {
-    setDownloadEndpointSaveError("");
-    setDownloadEndpoints((prev) => prev.filter((e) => e.id !== id));
-  };
-
-  const handleSaveDownloadEndpoints = async () => {
-    setSavingDownloadEndpoints(true);
-    setDownloadEndpointSaveError("");
-    try {
-      const res = await saveDownloadEndpoints(downloadEndpoints);
-      setDownloadEndpoints(res.endpoints);
-      setResolvedDownloadEndpoints(res.resolved);
-      setSavedDownloadEndpointsSnapshot(buildSavedTransferEndpointsSnapshot(res.endpoints));
-    } catch (e) {
-      setDownloadEndpointSaveError(
-        e instanceof Error ? e.message : "Download Endpoints 저장에 실패했습니다.",
-      );
-    } finally {
-      setSavingDownloadEndpoints(false);
     }
   };
 
@@ -728,54 +616,6 @@ function App() {
             onChange={handleLoginEndpointChange}
             onRemove={handleRemoveLoginEndpoint}
             onSave={() => void handleSaveLoginEndpoints()}
-          />
-
-          <TransferEndpointsPanel
-            open={panelOpen}
-            title="Upload Endpoints"
-            description={
-              "파일 업로드 API를 수동으로 등록하세요. 인벤토리에 없거나 multipart 업로드만 있는 경우 2-1 진단에 사용됩니다. 업로드가 없는 사이트는 비워 두세요."
-            }
-            icon={Upload}
-            accentClass="border-rose-500/25 text-rose-300 [&_button]:border-rose-400/40 [&_button]:bg-rose-500/10 [&_button]:text-rose-300"
-            defaultMethod="POST"
-            methodOptions={["POST", "PUT", "PATCH"]}
-            urlPlaceholder="/api/v1/files/upload or https://host/api/v1/upload"
-            saveLabel="Save Upload Endpoints"
-            emptyLabel="업로드 엔드포인트 추가"
-            endpoints={uploadEndpoints}
-            resolved={resolvedUploadEndpoints}
-            savedSnapshot={savedUploadEndpointsSnapshot}
-            saving={savingUploadEndpoints}
-            saveError={uploadEndpointSaveError}
-            onAdd={handleAddUploadEndpoint}
-            onChange={handleUploadEndpointChange}
-            onRemove={handleRemoveUploadEndpoint}
-            onSave={() => void handleSaveUploadEndpoints()}
-          />
-
-          <TransferEndpointsPanel
-            open={panelOpen}
-            title="Download Endpoints"
-            description={
-              "파일 다운로드·export API를 수동으로 등록하세요. 2-2 진단 후보에 우선 포함됩니다. 다운로드가 없는 사이트는 비워 두세요."
-            }
-            icon={Download}
-            accentClass="border-sky-500/25 text-sky-300 [&_button]:border-sky-400/40 [&_button]:bg-sky-500/10 [&_button]:text-sky-300"
-            defaultMethod="GET"
-            methodOptions={["GET", "POST"]}
-            urlPlaceholder="/api/v1/files/{id}/download or https://host/export/report"
-            saveLabel="Save Download Endpoints"
-            emptyLabel="다운로드 엔드포인트 추가"
-            endpoints={downloadEndpoints}
-            resolved={resolvedDownloadEndpoints}
-            savedSnapshot={savedDownloadEndpointsSnapshot}
-            saving={savingDownloadEndpoints}
-            saveError={downloadEndpointSaveError}
-            onAdd={handleAddDownloadEndpoint}
-            onChange={handleDownloadEndpointChange}
-            onRemove={handleRemoveDownloadEndpoint}
-            onSave={() => void handleSaveDownloadEndpoints()}
           />
 
           <div className="mb-6 grid grid-cols-2 gap-4 lg:grid-cols-4">

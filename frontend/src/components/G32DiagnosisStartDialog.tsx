@@ -13,7 +13,7 @@ import {
 
 const TABS: { id: G32DiagnosisPreset; icon: typeof Gauge; desc: string }[] = [
   { id: "minimal", icon: ZapOff, desc: "동작 확인 · login 1 · 6회" },
-  { id: "full", icon: Layers, desc: "전수 · login 전체 · 6회" },
+  { id: "full", icon: Layers, desc: "전수 · login 전체 · 25회" },
   { id: "manual", icon: Settings2, desc: "옵션 직접 설정" },
 ];
 
@@ -21,7 +21,7 @@ function PresetOverview({ preset, options }: { preset: "minimal" | "full"; optio
   const isMinimal = preset === "minimal";
   const checks = isMinimal
     ? ["첫 login URL 1개만 probe", "틀린 비밀번호 6회 · strict OFF", "httpx lockout 파이프라인 확인", "계정 잠금 주의"]
-    : ["모든 login entry probe", "틀린 비밀번호 6회 · strict ON", "status/body 변경까지 lockout 판정", "Test Account 전용 계정 권장"];
+    : ["모든 login entry probe", "틀린 비밀번호 25회 · strict ON", "status/body 변경까지 lockout 판정", "Test Account 전용 계정 권장"];
   return (
     <div className={`rounded-xl border p-4 ${isMinimal ? "border-cyan-400/30 bg-gradient-to-br from-cyan-500/10 to-transparent" : "border-amber-400/30 bg-gradient-to-br from-amber-500/10 to-transparent"}`}>
       <div className="mb-3 flex items-center gap-2">

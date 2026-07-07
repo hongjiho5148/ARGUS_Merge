@@ -22,9 +22,9 @@ export const MINIMAL_G32_OPTIONS: G32DiagnosisOptions = {
   maxLoginEntries: 1,
 };
 
-/** 전수 — 모든 login entry, 6회(5회 실패 + 1회 확인), strict ON. */
+/** 전수 — 모든 login entry, 25회, strict ON. */
 export const FULL_G32_OPTIONS: G32DiagnosisOptions = {
-  maxAttempts: 6,
+  maxAttempts: 25,
   timeout: 10,
   intervalSec: 0.05,
   probeAccountEmail: "",

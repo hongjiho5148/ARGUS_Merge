@@ -13,6 +13,14 @@ export interface G61DiagnosisOptions {
   timeout: number;
   intervalSec: number;
   useHttpx: boolean;
+  useZap: boolean;
+  zapUnified: boolean;
+  zapSupplemental: boolean;
+  /** 0 = unlimited. */
+  zapMaxRequests: number;
+  zapMaxMinutes: number;
+  /** 0 = seed every probe URL for ZAP supplemental. */
+  zapSeedCap: number;
 }
 
 /** 동작 확인 — api-tree 샘플 20개, httpx only. */
@@ -24,9 +32,15 @@ export const MINIMAL_G61_OPTIONS: G61DiagnosisOptions = {
   timeout: 10,
   intervalSec: 0.02,
   useHttpx: true,
+  useZap: false,
+  zapUnified: false,
+  zapSupplemental: false,
+  zapMaxRequests: 0,
+  zapMaxMinutes: 15,
+  zapSeedCap: 200,
 };
 
-/** 전체 전수 — Full, httpx only. */
+/** 전체 전수 — Full, httpx + ZAP, 상한 없음. */
 export const FULL_G61_OPTIONS: G61DiagnosisOptions = {
   probeMode: "full",
   sampleSize: 500,
@@ -35,6 +49,12 @@ export const FULL_G61_OPTIONS: G61DiagnosisOptions = {
   timeout: 12,
   intervalSec: 0.02,
   useHttpx: true,
+  useZap: true,
+  zapUnified: true,
+  zapSupplemental: true,
+  zapMaxRequests: 0,
+  zapMaxMinutes: 120,
+  zapSeedCap: 0,
 };
 
 export const DEFAULT_G61_OPTIONS = MINIMAL_G61_OPTIONS;
@@ -71,6 +91,12 @@ export function g61OptionsToPayload(options: G61DiagnosisOptions) {
       timeout: options.timeout,
       interval_sec: options.intervalSec,
       httpx_enabled: options.useHttpx,
+      zap_enabled: options.useZap,
+      zap_unified_enabled: options.zapUnified,
+      zap_supplemental_enabled: options.zapSupplemental,
+      zap_max_requests: options.zapMaxRequests,
+      zap_max_minutes: options.zapMaxMinutes,
+      zap_seed_cap: options.zapSeedCap,
     },
   };
 }
@@ -85,10 +111,21 @@ export function g61ScopeLabel(options: G61DiagnosisOptions): string {
 }
 
 export function g61OptionsSummary(options: G61DiagnosisOptions): string {
-  return [
-    "httpx",
+  const parts: string[] = [
+    options.useHttpx ? "httpx" : "no httpx",
     g61ScopeLabel(options),
-    g61RequestCapLabel(options.maxRequests),
+    `httpx ${g61RequestCapLabel(options.maxRequests)}`,
     `timeout ${options.timeout}s`,
-  ].join(" · ");
+  ];
+  if (options.useZap) {
+    const zapParts: string[] = [];
+    if (options.zapUnified) zapParts.push("unified");
+    if (options.zapSupplemental) zapParts.push("90022/10023");
+    parts.push(
+      `ZAP ${zapParts.join("+") || "on"} · ${g61RequestCapLabel(options.zapMaxRequests)} · ${options.zapMaxMinutes}m`,
+    );
+  } else {
+    parts.push("ZAP off");
+  }
+  return parts.join(" · ");
 }

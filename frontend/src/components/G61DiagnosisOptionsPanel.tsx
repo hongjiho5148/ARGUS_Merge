@@ -1,5 +1,38 @@
 import type { G61DiagnosisOptions, G61ProbeMode } from "../lib/g61DiagnosisOptions";
 
+function Check({
+  label,
+  hint,
+  checked,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  checked: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <label
+      className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 transition ${
+        checked
+          ? "border-cyan-400/40 bg-cyan-500/10"
+          : "border-cyber-border/50 hover:border-cyber-border"
+      }`}
+    >
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="mt-0.5 accent-cyan-400"
+      />
+      <span>
+        <span className="block text-xs font-medium text-white">{label}</span>
+        <span className="block text-[10px] leading-relaxed text-cyber-muted">{hint}</span>
+      </span>
+    </label>
+  );
+}
+
 function ProbeModeOption({
   mode,
   title,
@@ -46,7 +79,7 @@ export function G61DiagnosisOptionsPanel({
   return (
     <div className="space-y-4">
       <p className="text-[10px] text-cyber-muted">
-        SK Shielders 6-1 — httpx param/body/path/method/header 퍼징. max_requests=0 이면 무제한.
+        오류페이지 정보 노출 — param/body/path/method/header 퍼징. max_requests=0 이면 무제한.
       </p>
 
       <div className="space-y-2">
@@ -114,6 +147,73 @@ export function G61DiagnosisOptionsPanel({
             className="mt-1 w-full rounded-lg border border-cyber-border/60 bg-cyber-bg px-2 py-1.5 text-xs text-white"
           />
         </label>
+      </div>
+
+      <Check
+        label="httpx Phase A (ARGUS fuzz)"
+        hint="param/body/path/method/header 전수 퍼징"
+        checked={options.useHttpx}
+        onChange={(useHttpx) => onChange({ ...options, useHttpx })}
+      />
+
+      <div className="rounded-xl border border-violet-400/25 bg-violet-500/5 p-3 space-y-2">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-violet-200/80">ZAP</p>
+        <Check
+          label="ZAP enabled"
+          hint="ZapTransport 동일 fuzz + native rules"
+          checked={options.useZap}
+          onChange={(useZap) => onChange({ ...options, useZap })}
+        />
+        {options.useZap ? (
+          <>
+            <Check
+              label="ZAP unified"
+              hint="httpx와 동일 triggers"
+              checked={options.zapUnified}
+              onChange={(zapUnified) => onChange({ ...options, zapUnified })}
+            />
+            <Check
+              label="ZAP supplemental (90022 + 10023)"
+              hint="Native error disclosure rules"
+              checked={options.zapSupplemental}
+              onChange={(zapSupplemental) => onChange({ ...options, zapSupplemental })}
+            />
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block text-[10px] text-cyber-muted">
+                zap_max_requests (0=무제한)
+                <input
+                  type="number"
+                  min={0}
+                  step={100}
+                  value={options.zapMaxRequests}
+                  onChange={(e) => onChange({ ...options, zapMaxRequests: Number(e.target.value) })}
+                  className="mt-1 w-full rounded-lg border border-cyber-border/60 bg-cyber-bg px-2 py-1.5 text-xs text-white"
+                />
+              </label>
+              <label className="block text-[10px] text-cyber-muted">
+                zap_max_minutes
+                <input
+                  type="number"
+                  min={1}
+                  max={480}
+                  value={options.zapMaxMinutes}
+                  onChange={(e) => onChange({ ...options, zapMaxMinutes: Number(e.target.value) })}
+                  className="mt-1 w-full rounded-lg border border-cyber-border/60 bg-cyber-bg px-2 py-1.5 text-xs text-white"
+                />
+              </label>
+              <label className="col-span-2 block text-[10px] text-cyber-muted">
+                zap_seed_cap (0=전체)
+                <input
+                  type="number"
+                  min={0}
+                  value={options.zapSeedCap}
+                  onChange={(e) => onChange({ ...options, zapSeedCap: Number(e.target.value) })}
+                  className="mt-1 w-full rounded-lg border border-cyber-border/60 bg-cyber-bg px-2 py-1.5 text-xs text-white"
+                />
+              </label>
+            </div>
+          </>
+        ) : null}
       </div>
     </div>
   );

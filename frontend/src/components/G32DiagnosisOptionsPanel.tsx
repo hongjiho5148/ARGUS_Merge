@@ -44,8 +44,7 @@ export function G32DiagnosisOptionsPanel({
       </p>
       <label className="block">
         <span className="mb-1 block text-[10px] font-medium text-white">최대 실패 시도 횟수</span>
-        <span className="mb-1.5 block text-[10px] text-cyber-muted">5회 실패 정책 확인을 위해 최소 6회</span>
-        <input type="number" min={6} max={25} value={options.maxAttempts} onChange={(e) => onChange({ ...options, maxAttempts: Number(e.target.value) })} className="w-full rounded-lg border border-cyber-border/60 bg-cyber-bg px-3 py-2 font-mono text-xs text-white" />
+        <input type="number" min={3} max={25} value={options.maxAttempts} onChange={(e) => onChange({ ...options, maxAttempts: Number(e.target.value) })} className="w-full rounded-lg border border-cyber-border/60 bg-cyber-bg px-3 py-2 font-mono text-xs text-white" />
       </label>
       <label className="block">
         <span className="mb-1 block text-[10px] font-medium text-white">Login entry 상한</span>

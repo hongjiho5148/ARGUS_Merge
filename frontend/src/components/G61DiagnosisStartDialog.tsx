@@ -13,7 +13,7 @@ import {
 
 const TABS: { id: G61DiagnosisPreset; icon: typeof Gauge; desc: string }[] = [
   { id: "minimal", icon: ZapOff, desc: "동작 확인 · httpx · 샘플 20" },
-  { id: "full", icon: Zap, desc: "전수 · httpx only" },
+  { id: "full", icon: Zap, desc: "전수 · httpx + ZAP" },
   { id: "manual", icon: Settings2, desc: "옵션 직접 설정" },
 ];
 
@@ -29,14 +29,14 @@ function PresetOverview({
     ? [
         "api-tree에서 20개 API 샘플",
         "httpx param/body/path/method/header 퍼징",
-        "요청 상한 2,000건",
+        "요청 상한 2,000건 · ZAP OFF",
         "수 분 이내 스모크",
       ]
     : [
         "api-tree verified API 전체",
         "모든 param · body · path · method · header × 인증",
-        "httpx SK Shielders 6-1 오류 응답 탐지",
-        "max_requests=0 이면 무제한 (수 시간 소요 가능)",
+        "httpx + ZAP unified + supplemental (90022/10023)",
+        "요청·ZAP seed 상한 없음 (시간 오래 걸릴 수 있음)",
       ];
 
   return (

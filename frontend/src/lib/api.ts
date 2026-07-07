@@ -19,9 +19,6 @@ import type {
   LoginEndpointEntry,
   LoginEndpointsResponse,
   LoginEntryReportResponse,
-  TransferEndpointEntry,
-  TransferEndpointsResponse,
-  SaveTransferEndpointsResponse,
   DiagnosisCatalogResponse,
   DiagnosisSectionReport,
   DiagnosisRunSectionResponse,
@@ -96,46 +93,6 @@ export function fetchDiscoverProgress(): Promise<DiscoverProgressResponse> {
 
 export function fetchDiagnosisProgress(): Promise<DiagnosisProgressResponse> {
   return request("/diagnosis/progress");
-}
-
-export function cancelDiagnosisRun(): Promise<{ ok: boolean; section_id: string }> {
-  return request("/diagnosis/cancel", { method: "POST" });
-}
-
-const DEFAULT_DIAGNOSIS_WAIT_MS = 5 * 60 * 60 * 1000;
-
-export async function waitForDiagnosisComplete(
-  sectionId: string,
-  options?: {
-    onProgress?: (progress: DiagnosisProgressResponse) => void;
-    pollMs?: number;
-    timeoutMs?: number;
-  },
-): Promise<void> {
-  const pollMs = options?.pollMs ?? 1200;
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_DIAGNOSIS_WAIT_MS;
-  const started = Date.now();
-
-  while (Date.now() - started < timeoutMs) {
-    const progress = await fetchDiagnosisProgress();
-    options?.onProgress?.(progress);
-
-    if (progress.section_id === sectionId || progress.running) {
-      if (!progress.running && progress.phase === "done" && progress.section_id === sectionId) {
-        return;
-      }
-      if (!progress.running && progress.phase === "cancelled" && progress.section_id === sectionId) {
-        return;
-      }
-      if (!progress.running && progress.phase === "error") {
-        throw new Error(progress.message || `${sectionId} diagnosis failed`);
-      }
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, pollMs));
-  }
-
-  throw new Error(`${sectionId} diagnosis timed out waiting for completion`);
 }
 
 export function fetchVerifyReport(params: {
@@ -219,42 +176,11 @@ export function saveLoginEndpoints(
   });
 }
 
-export function fetchUploadEndpoints(): Promise<TransferEndpointsResponse> {
-  return request("/upload-endpoints");
-}
-
-export function saveUploadEndpoints(
-  endpoints: TransferEndpointEntry[],
-): Promise<SaveTransferEndpointsResponse> {
-  return request("/upload-endpoints", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ endpoints }),
-  });
-}
-
-export function fetchDownloadEndpoints(): Promise<TransferEndpointsResponse> {
-  return request("/download-endpoints");
-}
-
-export function saveDownloadEndpoints(
-  endpoints: TransferEndpointEntry[],
-): Promise<SaveTransferEndpointsResponse> {
-  return request("/download-endpoints", {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ endpoints }),
-  });
-}
-
 export function fetchDiagnosisCatalog(): Promise<DiagnosisCatalogResponse> {
   return request("/diagnosis/catalog");
 }
 
 export function fetchDiagnosisReport(sectionId: string): Promise<DiagnosisSectionReport> {
-  if (sectionId === "6-1") {
-    return request("/diagnosis/modules/6-1/report/summary");
-  }
   return request(`/diagnosis/modules/${encodeURIComponent(sectionId)}/report`);
 }
 
