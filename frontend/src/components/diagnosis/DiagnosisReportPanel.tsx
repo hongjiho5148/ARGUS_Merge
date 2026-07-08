@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ChevronDown, Terminal, Copy } from "lucide-react"; // 💡 Terminal, Copy 추가
 import type { DiagnosisSectionReport } from "../../types";
+import { G73FindingsPanel } from "./G73FindingsPanel";
 
 
 const STATUS_STYLES: Record<string, string> = {
@@ -279,7 +280,7 @@ function findingBucket(f: {
   | "tls"
   | "version"
   | "port_scan"
-  | "csv"
+  | "cve"
   | "info"
   | "inventory"
   | "other" {
@@ -306,7 +307,7 @@ function findingBucket(f: {
     engine === "osv" ||
     engine === "dependency_check"
   ) {
-    return "csv";
+    return "cve";
   }
 
   return "other";
@@ -461,7 +462,7 @@ function GroupedFindingsPanel({
   const tls = findings.filter((f) => findingBucket(f) === "tls");
   const version = findings.filter((f) => findingBucket(f) === "version");
   const portScan = findings.filter((f) => findingBucket(f) === "port_scan");
-  const csv = findings.filter((f) => findingBucket(f) === "csv");
+  const cve = findings.filter((f) => findingBucket(f) === "cve");
   const inventory = findings.filter((f) => findingBucket(f) === "inventory");
   const info = findings.filter((f) => findingBucket(f) === "info");
   const other = findings.filter((f) => findingBucket(f) === "other");
@@ -557,14 +558,14 @@ function GroupedFindingsPanel({
       />
 
       <CollapsibleFindingsSection
-        title="CSV (Dependency/CVE)"
+        title="CVE (Dependency/CVE)"
         subtitle="· 라이브러리 취약점 분석"
-        count={csv.length}
+        count={cve.length}
         defaultOpen={true}
-        findings={csv}
+        findings={cve}
         sectionId={sectionId}
       >
-        {csv.length > 0 && (
+        {cve.length > 0 && (
           <div className="mx-3 mt-3 rounded border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-200/90">
             <p className="mb-1 font-semibold text-amber-400">안내</p>
             <p>
@@ -1280,6 +1281,8 @@ export function DiagnosisReportPanel({ report }: { report: DiagnosisSectionRepor
 
       {findings.length === 0 ? (
         <p className="text-xs text-cyber-muted">finding 없음</p>
+      ) : report.section_id === "7-3" ? (
+        <G73FindingsPanel findings={findings} />
       ) : (
         <GroupedFindingsPanel findings={findings} sectionId={report.section_id} />
       )}

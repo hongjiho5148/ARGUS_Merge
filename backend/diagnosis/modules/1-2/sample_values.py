@@ -41,18 +41,24 @@ def pick_sample_value(
     param_type: str = "string",
     sample: str | None = None,
 ) -> str:
+    # API Tree에 명시된 example 값 사용
+    # string 같은 무의미 값 제외
     if sample is not None and str(sample).strip() and not is_generic_sample(sample):
         return str(sample)
+    # 파라미터 이름으로 정상값 추측 (ex: sort -> "createdAt")
     key = name.lower()
     fallbacks = fallback_samples_for_name(key, param_type=param_type)
     if fallbacks:
         return fallbacks[0]
+    # 타입보고 정상값 예측 후 넣기
     if param_type in ("integer", "number"):
         return "1"
     if param_type == "boolean":
         return "false"
+    # 이름이  ~id로 끝난다면 식별자로 보고 1
     if key.endswith("id"):
         return "1"
+    # 모두 실패 시 최후의 기본값
     return "argus-test"
 
 
