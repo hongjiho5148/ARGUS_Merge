@@ -37,27 +37,11 @@ discover:
 
 auth:
   # Login page URLs → Dashboard Base URLs. Field names for login POST body only.
-  login_url: "http://host.docker.internal:8080/api/v1/auth/login"
   id_field: email
   pw_field: password
   token_field: cookie.accessToken
   delivery: cookie
   cookie_name: accessToken
-
-diagnosis_2_1:
-  timeout: 15.0
-  max_targets: 20
-  httpx_enabled: true
-  zap_enabled: false            # ZAP passive 스캔은 업로드 특성상 기본 비활성
-  zap_passive_wait_seconds: 60
-  interval_sec: 0.05            # 요청 간 딜레이(초) — 서버 rate limit 대응
-  enable_auth_modes: true       # false 시 anonymous 패스만 실행
-  allowed_extensions:           # 정상 허용 확장자 화이트리스트
-    - jpg
-    - jpeg
-    - png
-    - gif
-    - webp
 
 diagnosis_1_5:
   redirect_sink_base: "http://host.docker.internal:8001/argus-redirect-sink"
