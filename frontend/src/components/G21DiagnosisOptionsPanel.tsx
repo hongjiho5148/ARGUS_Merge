@@ -72,31 +72,43 @@ export function G21DiagnosisOptionsPanel({
       <div className="rounded-xl border border-cyber-border/40 bg-cyber-bg/30 p-3">
         <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-cyber-muted">Scan methods</p>
         <p className="mb-2 text-[10px] text-cyber-muted">
-          업로드 엔드포인트는 config의 upload_endpoints 또는 api-tree 자동탐지로 선정됩니다.
+          업로드 대상은 config의 upload_endpoints 또는 api-tree 자동탐지로 결정됩니다.
         </p>
         <div className="grid gap-2 sm:grid-cols-2">
           <Check
             label="httpx probe"
-            hint="위험 확장자 업로드 우회 · 경로/주소 노출 탐지"
+            hint="악성 확장자 업로드 시도 및 경로/주소 노출 탐지"
             checked={options.useHttpx}
             disabled={disabled}
             onChange={(useHttpx) => onChange({ ...options, useHttpx })}
           />
           <Check
             label="ZAP scan"
-            hint="동일 매트릭스 + native supplemental — Docker ZAP 필요"
+            hint="수동 스캔 + native supplemental — Docker ZAP 필요"
             checked={options.useZap}
             disabled={disabled}
             onChange={(useZap) => onChange({ ...options, useZap })}
           />
         </div>
       </div>
+
+      <div className="rounded-xl border border-cyber-border/40 bg-cyber-bg/30 p-3">
+        <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-cyber-muted">Auth</p>
+        <Check
+          label="인증 패스 활성화 (enable_auth_modes)"
+          hint="테스트 계정이 등록된 경우 anonymous 외에 인증된 사용자 패스도 실행"
+          checked={options.enableAuthModes}
+          disabled={disabled}
+          onChange={(enableAuthModes) => onChange({ ...options, enableAuthModes })}
+        />
+      </div>
+
       <div className="rounded-xl border border-cyber-border/40 bg-cyber-bg/30 p-3">
         <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-cyber-muted">Limits</p>
         <div className="grid gap-3 sm:grid-cols-2">
           <NumField
             label="Max targets"
-            hint="업로드 엔드포인트 상한"
+            hint="업로드 대상 엔드포인트 수 상한"
             value={options.maxTargets}
             min={1}
             max={200}
@@ -104,8 +116,26 @@ export function G21DiagnosisOptionsPanel({
             onChange={(maxTargets) => onChange({ ...options, maxTargets })}
           />
           <NumField
+            label="Max requests (0=무제한)"
+            hint="전체 요청 총량 한도 — 초과 시 중단"
+            value={options.maxRequests}
+            min={0}
+            max={10000}
+            disabled={disabled}
+            onChange={(maxRequests) => onChange({ ...options, maxRequests })}
+          />
+          <NumField
+            label="Interval (sec)"
+            hint="요청 간 대기 시간 — rate-limit 대응 (0=없음)"
+            value={options.intervalSec}
+            min={0}
+            max={5}
+            disabled={disabled}
+            onChange={(intervalSec) => onChange({ ...options, intervalSec })}
+          />
+          <NumField
             label="ZAP passive wait (sec)"
-            hint="ZAP 패시브 스캐너 대기 시간"
+            hint="ZAP 수동스캔 채널 대기 시간"
             value={options.zapPassiveWaitSeconds}
             min={0}
             max={300}

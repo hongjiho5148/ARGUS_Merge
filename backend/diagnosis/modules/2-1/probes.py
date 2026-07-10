@@ -1,14 +1,9 @@
-"""Run malicious/edge-case multipart upload probes for 2-1.
-
-Transport-agnostic: works identically over ``HttpxTransport`` (direct) or
-``ZapTransport`` (every request goes through ``zap.core.sendRequest``, so it
-lands in ZAP's Sites/History and gets passively scanned like normal proxied
-traffic — see ``zap_scan.py`` for the supplemental ZAP-native findings this
-enables).
-"""
+"""Run malicious/edge-case multipart upload probes for guideline 2-1."""
 
 from __future__ import annotations
 
+import time
+from dataclasses import dataclass, field
 from typing import Any, Callable
 
 from diagnosis.result import DiagnosisFinding
@@ -16,7 +11,27 @@ from diagnosis.result import DiagnosisFinding
 _MAX_BODY_CAPTURE = 4000
 
 
-def _decode(body: bytes) -> str:
+@dataclass
+class RequestBudget:
+    """max_requests <= 0 means no request cap."""
+    max_requests: int
+    sent: int = 0
+    
+    @property
+    def unlimited(self) -> bool:
+        return self.max_requests <= 0
+        
+    def exhausted(self) -> bool:
+        return not self.unlimited and self.sent >= self.max_requests
+        
+    def consume(self) -> bool:
+        if self.exhausted():
+            return False
+        self.sent += 1
+        return True
+
+
+def _decode(body: bytes | str | None) -> str:
     return body.decode("utf-8", errors="replace")[:_MAX_BODY_CAPTURE]
 
 
@@ -46,6 +61,10 @@ def _post_upload(
     return resp.status, _decode(resp.body), resp.headers.get("content-type", ""), resp.headers, None
 
 
+def _preview(body: str) -> str:
+    return body[:500].replace("\n", " ").strip()
+
+
 def run_upload_probes(
     targets: list[Any],
     payloads: list[Any],
@@ -59,6 +78,8 @@ def run_upload_probes(
     request_headers: dict[str, str] | None = None,
     account_email: str | None = None,
     login_label: str | None = None,
+    interval_sec: float = 0.0,
+    budget: RequestBudget | None = None,
     on_progress: Callable[..., None] | None = None,
 ) -> tuple[list[DiagnosisFinding], dict[str, Any]]:
     findings: list[DiagnosisFinding] = []
@@ -81,19 +102,34 @@ def run_upload_probes(
 
     for target in targets:
         for payload in payloads:
+            if budget and budget.exhausted():
+                stats["budget_exhausted"] = True
+                break
+                
+            if budget:
+                budget.consume()
+
             done += 1
             stats["requests_sent"] += 1
             if on_progress:
                 on_progress(
                     endpoints_done=done,
                     endpoints_total=total,
-                    endpoint_id=f"{target.label} · {payload.payload_id}"[:80],
+                    endpoint_id=f"{target.label} - {payload.payload_id}"[:80],
                 )
 
             requested_urls.add(target.url)
             status, body, content_type, resp_headers, err = _post_upload(
-                transport, target, payload, multipart_mod, timeout=timeout, extra_headers=request_headers
+                transport,
+                target,
+                payload,
+                multipart_mod,
+                timeout=timeout,
+                extra_headers=request_headers,
             )
+            # interval_sec 딜레이 적용 — 서버 rate limit 대응
+            if interval_sec > 0:
+                time.sleep(interval_sec)
 
             base_evidence: dict[str, Any] = {
                 "rule_id": "2-1-malicious-upload",
@@ -101,8 +137,12 @@ def run_upload_probes(
                 "auth_mode": auth_mode,
                 "account_email": account_email,
                 "login_label": login_label,
+                "business_role": getattr(target, "business_role", "user"),
+                "feature_key": getattr(target, "feature_key", "file_upload"),
+                "feature_label": getattr(target, "feature_label", target.path),
                 "url": target.url,
                 "method": target.method,
+                "path": target.path,
                 "endpoint_id": target.endpoint_id,
                 "file_field": target.file_field,
                 "source": target.source,
@@ -128,22 +168,32 @@ def run_upload_probes(
                 stats["extension_bypass_issues"] += 1 if ext_issue.accepted else 0
                 sev = ext_issue.severity
                 stats["by_severity"][sev] = stats["by_severity"].get(sev, 0) + 1
-                ev = dict(base_evidence)
-                ev["reason"] = ext_issue.reason
-                ev["body_preview"] = body[:500].replace("\n", " ").strip()
+                ev = {
+                    **base_evidence,
+                    "reason": ext_issue.reason,
+                    "finding_type": "true_positive"
+                    if ext_issue.accepted
+                    else "false_positive_candidate",
+                    "assessment": "정탐" if ext_issue.accepted else "오탐 후보",
+                    "body_preview": _preview(body),
+                }
                 if ext_issue.accepted:
                     msg = (
-                        f"{prefix} 허용되지 않은 확장자(.{payload.ext}) 업로드가 차단되지 않음 "
-                        f"— {payload.technique} · {target.label}"
+                        f"{prefix} disallowed extension accepted (.{payload.ext}) "
+                        f"-- {payload.technique} -- {target.label}"
                     )
                 else:
                     msg = (
-                        f"{prefix} 정상 이미지 업로드가 거부됨(baseline) — "
-                        f"다른 결과 해석 시 참고: {target.label}"
+                        f"{prefix} baseline image upload was rejected; treat related findings "
+                        f"as false-positive candidates until endpoint fields/auth are verified: {target.label}"
                     )
                 findings.append(DiagnosisFinding(severity=sev, message=msg, evidence=ev))
 
-            exposure = rules_mod.detect_path_exposure(body, content_type, resp_headers)
+            exposure = (
+                rules_mod.detect_path_exposure(body, content_type, resp_headers)
+                if rules_mod.upload_accepted(status, body)
+                else None
+            )
             if exposure is not None:
                 stats["path_exposure_issues"] += 1
                 stats["by_severity"][exposure.severity] = (
@@ -153,15 +203,17 @@ def run_upload_probes(
                     DiagnosisFinding(
                         severity=exposure.severity,
                         message=(
-                            f"{prefix} 업로드 응답에 내부 경로/주소 노출 "
-                            f"({exposure.kind} · {exposure.location}) — {target.label}"
+                            f"{prefix} upload response exposes file path or URL "
+                            f"({exposure.kind} -- {exposure.location}) -- {target.label}"
                         ),
                         evidence={
                             **base_evidence,
                             "reason": f"path_exposure:{exposure.kind}",
+                            "finding_type": "true_positive",
+                            "assessment": "정탐",
                             "exposure_location": exposure.location,
                             "exposed_sample": exposure.sample,
-                            "body_preview": body[:500].replace("\n", " ").strip(),
+                            "body_preview": _preview(body),
                         },
                     )
                 )

@@ -52,12 +52,18 @@ class HttpxTransport:
         timeout: float | None = None,
     ) -> ProbeResponse:
         _ = follow_redirects
+        # Remove Content-Length to avoid mismatch with body bytes
+        safe_headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
+        
+        # httpx handles body=b"" with None better when no body is actually intended
+        actual_body = body if body and len(body) > 0 else None
+
         try:
             resp = self._client.request(
                 method,
                 url,
-                headers=headers,
-                content=body,
+                headers=safe_headers,
+                content=actual_body,
                 timeout=timeout if timeout is not None else self._timeout,
             )
             return ProbeResponse(

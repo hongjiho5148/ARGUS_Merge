@@ -33,6 +33,13 @@ _INTERNAL_HOST = re.compile(
     re.IGNORECASE,
 )
 _JAVA_STACK_TRACE = re.compile(r"\bat [\w.$]+\([\w.]+\.java:\d+\)")
+_PUBLIC_FILE_URL = re.compile(
+    r"(?i)\b(?:https?|s3)://[^\s\"'<>]+(?:/|%2f)(?:uploads?|files?|images?|media|objects?)(?:/|%2f)[^\s\"'<>]+"
+)
+_STORAGE_OBJECT_KEY = re.compile(
+    r"(?i)(?:^|/)(?:uploads?|files?|images?|media|objects?)/[A-Za-z0-9._~!$&'()*+,;=:@%/-]+\."
+    r"(?:jpe?g|png|gif|webp|bmp|svg|html?|js|jspx?|php\d?|phtml|aspx?|exe|jar|sh|bat)(?:$|[?#])"
+)
 
 _URL_LIKE_KEY = re.compile(r"(?i)(url|path|location|filepath|key|storagepath)$")
 
@@ -62,6 +69,10 @@ def _looks_rejected(status: int | None, body: str) -> bool:
     if 200 <= status < 300 and body and _FAILURE_MARKERS.search(body):
         return True
     return False
+
+
+def upload_accepted(status: int | None, body: str) -> bool:
+    return status is not None and 200 <= status < 300 and not _looks_rejected(status, body)
 
 
 def classify_extension_bypass(
@@ -126,9 +137,13 @@ def _scan_text_for_paths(text: str, *, location: str) -> ExposureIssue | None:
         )
     m = _INTERNAL_HOST.search(text)
     if m:
-        return ExposureIssue(
-            severity="low", kind="internal_host_or_ip", sample=m.group(0), location=location
-        )
+        return ExposureIssue(severity="medium", kind="internal_host_or_ip", sample=m.group(0), location=location)
+    m = _PUBLIC_FILE_URL.search(text)
+    if m:
+        return ExposureIssue(severity="low", kind="public_file_url", sample=m.group(0), location=location)
+    m = _STORAGE_OBJECT_KEY.search(text)
+    if m:
+        return ExposureIssue(severity="low", kind="storage_object_key", sample=m.group(0), location=location)
     return None
 
 

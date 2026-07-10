@@ -1,0 +1,9 @@
+{
+  "endpoints": [
+    {
+      "id": "login_1",
+      "url": "http://host.docker.internal:8080/api/v1/auth/login",
+      "kind": "api"
+    }
+  ]
+}

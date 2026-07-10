@@ -488,6 +488,9 @@ class DiagnosisG21RunOptions(BaseModel):
     zap_passive_wait_seconds: int | None = Field(default=None, ge=0, le=300)
     timeout: float | None = Field(default=None, ge=1.0, le=60.0)
     allowed_extensions: list[str] | None = None
+    interval_sec: float | None = Field(default=None, ge=0.0, le=5.0)
+    enable_auth_modes: bool | None = None
+    max_requests: int | None = Field(default=None, ge=0)
 
 
 class DiagnosisG42RunOptions(BaseModel):

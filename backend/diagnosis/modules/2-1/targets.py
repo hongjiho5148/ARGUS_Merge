@@ -35,6 +35,18 @@ _FILE_FIELD_NAME = re.compile(
 )
 _UPLOAD_METHODS = ("POST", "PUT")
 
+# 경로 마지막 세그먼트가 아래 키워드 중 하나이면 업로드 엔드포인트가 아닌 액션 경로임.
+# probe 아티팩트로 multipart Content-Type 헤더가 기록돼 있어도 제외한다.
+_NON_UPLOAD_ACTION_SUFFIXES = re.compile(
+    r"(?i)/("
+    r"likes?|comments?|replies|restore|approve|reject|cancel|confirm"
+    r"|activate|deactivate|enable|disable|publish|unpublish|archive"
+    r"|follow|unfollow|bookmark|unbookmark|favorite|unfavorite"
+    r"|view|views|read|reads|share|shares|report|reports"
+    r"|count|counts|stat|stats|status|check|verify|validate"
+    r")$"
+)
+
 
 @dataclass
 class UploadTarget:
@@ -44,10 +56,48 @@ class UploadTarget:
     url: str
     label: str
     file_field: str
-    extra_fields: dict[str, str] = field(default_factory=dict)
+    extra_fields: dict[str, str] = field(default_factory=dict)  # multipart body 파라미터
+    query_params: dict[str, str] = field(default_factory=dict)  # URL query string 파라미터
     allowed_extensions: list[str] | None = None
     source: str = "inventory"
     endpoint_id: str = ""
+    business_role: str = "user"
+    feature_key: str = "file_upload"
+    feature_label: str = "File upload"
+
+
+def _business_role(path: str) -> str:
+    lowered = path.lower()
+    if "/admin/" in lowered or lowered.startswith("/admin"):
+        return "admin"
+    if "/seller/" in lowered or lowered.startswith("/seller"):
+        return "seller"
+    return "user"
+
+
+def _feature_key(path: str, file_field: str) -> str:
+    lowered = path.lower()
+    field = re.sub(r"[^a-z0-9]+", "_", file_field.lower()).strip("_") or "file"
+    if "/posts" in lowered:
+        return f"posts_{field}"
+    if "/accommodations" in lowered:
+        return f"accommodations_{field}"
+    if "/cars" in lowered:
+        return f"cars_{field}"
+    normalized = re.sub(r"\{[^}]+\}", "id", lowered)
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+    return f"{normalized}_{field}" if normalized else f"upload_{field}"
+
+
+def _feature_label(path: str, file_field: str) -> str:
+    lowered = path.lower()
+    if "/posts" in lowered:
+        return f"Posts / {file_field}"
+    if "/accommodations" in lowered:
+        return f"Accommodations / {file_field}"
+    if "/cars" in lowered:
+        return f"Cars / {file_field}"
+    return f"{path} / {file_field}"
 
 
 def collect_base_urls(raw_config: dict[str, Any] | None) -> list[str]:
@@ -77,17 +127,57 @@ def _find_file_field(ep: Endpoint) -> str | None:
     return candidates[0].name
 
 
-def _extra_fields_from_endpoint(ep: Endpoint, file_field: str) -> dict[str, str]:
+def _form_fields_from_endpoint(ep: Endpoint, file_field: str) -> dict[str, str]:
+    """multipart body에 포함할 form/body 파라미터 (file_field 제외)."""
     fields: dict[str, str] = {}
+    seen_names: set[str] = set()
     for p in ep.request_params:
-        if p.in_ not in ("body", "form", "query"):
+        if p.in_ not in ("body", "form"):
             continue
         if p.name == file_field or p.role != "input":
             continue
         if p.type == "array":
-            continue  # nested arrays are not something a generic probe can fill in safely
+            continue
+        if p.name in seen_names:
+            continue
+        seen_names.add(p.name)
         fields[p.name] = str(sample_value(p))
     return fields
+
+
+def _query_params_from_endpoint(ep: Endpoint, file_field: str) -> dict[str, str]:
+    """URL query string에 붙일 query 파라미터. 이미 form 파라미터로 취급된 파라미터는 제외."""
+    form_names = {
+        p.name for p in ep.request_params
+        if p.in_ in ("body", "form") and p.name != file_field
+    }
+    fields: dict[str, str] = {}
+    seen_names: set[str] = set()
+    for p in ep.request_params:
+        if p.in_ != "query":
+            continue
+        if p.name == file_field or p.role != "input":
+            continue
+        if p.type == "array":
+            continue
+        # form 파라미터로 이미 커버되는 것은 query에 중복 추가하지 않음
+        if p.name in form_names:
+            continue
+        if p.name in seen_names:
+            continue
+        seen_names.add(p.name)
+        fields[p.name] = str(sample_value(p))
+    return fields
+
+
+# 없어진 이름으로 호용 - 이전 코드 호환성 유지
+def _extra_fields_from_endpoint(ep: Endpoint, file_field: str) -> dict[str, str]:
+    return _form_fields_from_endpoint(ep, file_field)
+
+
+def _is_non_upload_action(path: str) -> bool:
+    """경로 마지막 세그먼트가 좋아요/댓글/복구 등 비업로드 액션이면 True."""
+    return bool(_NON_UPLOAD_ACTION_SUFFIXES.search(path))
 
 
 def discover_upload_endpoints(tree: ApiTree) -> list[Endpoint]:
@@ -95,8 +185,20 @@ def discover_upload_endpoints(tree: ApiTree) -> list[Endpoint]:
     for ep in tree.endpoints:
         if ep.kind != "api" or ep.method.upper() not in _UPLOAD_METHODS:
             continue
-        if _has_multipart_header(ep) or _find_file_field(ep):
+        # 명확한 비업로드 액션 경로는 multipart 헤더 probe 아티팩트가 있어도 제외
+        if _is_non_upload_action(ep.path):
+            continue
+        # 실제 파일 파라미터가 있으면 업로드 엔드포인트로 확정
+        if _find_file_field(ep):
             found.append(ep)
+            continue
+        # multipart 헤더 기록이 있지만 파일 파라미터가 없는 경우:
+        # probe 아티팩트일 가능성이 있으므로, 파라미터 구성이 명확한 경우에만 포함
+        if _has_multipart_header(ep):
+            # 파라미터가 아예 없거나 body/form 파라미터가 있으면 포함
+            body_form_params = [p for p in ep.request_params if p.in_ in ("body", "form")]
+            if body_form_params:
+                found.append(ep)
     return found
 
 
@@ -137,14 +239,20 @@ def _from_inventory(
     for ep in endpoints:
         path = _endpoint_path(ep)
         file_field = _find_file_field(ep) or "file"
-        extra_fields = _extra_fields_from_endpoint(ep, file_field)
+        extra_fields = _form_fields_from_endpoint(ep, file_field)
+        query_params = _query_params_from_endpoint(ep, file_field)
         target_bases = (
             [ep.base_url] if ep.base_url.rstrip("/").lower() in tree_bases else bases
         )
         for base in target_bases or bases:
             probe_base = probe_base_url(base)
-            url = f"{probe_base.rstrip('/')}{path}"
-            key = f"{ep.method.upper()}:{url}"
+            base_url_path = f"{probe_base.rstrip('/')}{path}"
+            # query params를 URL에 주입
+            if query_params:
+                from urllib.parse import urlencode
+                base_url_path = f"{base_url_path}?{urlencode(query_params)}"
+            url = base_url_path
+            key = f"{ep.method.upper()}:{probe_base.rstrip('/')}{path}"
             if key in seen:
                 continue
             seen.add(key)
@@ -157,9 +265,13 @@ def _from_inventory(
                     label=f"{ep.method.upper()} {base}{path}",
                     file_field=file_field,
                     extra_fields=extra_fields,
+                    query_params=query_params,
                     allowed_extensions=list(default_allowed_extensions),
                     source="inventory",
                     endpoint_id=ep.endpoint_id,
+                    business_role=_business_role(path),
+                    feature_key=_feature_key(path, file_field),
+                    feature_label=_feature_label(path, file_field),
                 )
             )
     meta["targets"] = len(out)
@@ -203,6 +315,9 @@ def _from_config(
                     allowed_extensions=allowed,
                     source="config",
                     endpoint_id=f"{base.rstrip('/')}:{method}:{path}",
+                    business_role=_business_role(path),
+                    feature_key=_feature_key(path, file_field),
+                    feature_label=_feature_label(path, file_field),
                 )
             )
     return out, {"source": "config", "configured_endpoints": len(entries), "targets": len(out)}

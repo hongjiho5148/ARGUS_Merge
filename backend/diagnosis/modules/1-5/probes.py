@@ -19,13 +19,15 @@ def _request(
     method = str(job.get("method") or "GET").upper()
     url = str(job["url"])
     headers = dict(job.get("headers") or {})
+    # Remove Content-Length so httpx can calculate it based on the actual body
+    headers = {k: v for k, v in headers.items() if k.lower() != "content-length"}
     body = job.get("body") or ""
     try:
         resp = client.request(
             method,
             url,
             headers=headers,
-            content=body if body else None,
+            content=body.encode("utf-8") if isinstance(body, str) else body,
             timeout=timeout,
             follow_redirects=False,
         )

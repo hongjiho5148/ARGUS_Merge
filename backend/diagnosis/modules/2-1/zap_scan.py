@@ -15,6 +15,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.zap_util import (
+    apply_auth_to_zap,
     connect_zap,
     ensure_zap_proxy,
     probe_url,
@@ -41,8 +42,14 @@ PLUGIN_LABELS: dict[str, str] = {
 _SEVERITY_BY_RISK = {"high": "high", "medium": "medium", "low": "low", "informational": "info"}
 
 
-def open_zap_transport(raw_config: dict[str, Any]) -> tuple[Any, ZapTransport, str]:
+def open_zap_transport(
+    raw_config: dict[str, Any],
+    auth: dict[str, Any] | None = None,
+) -> tuple[Any, ZapTransport, str]:
     """Connect to ZAP and return (zap_client, transport, proxy_url).
+
+    auth를 전달하면 ZAP Replacer에 인증 헤더를 주입해 passive 규칙이
+    인증된 응답도 분석할 수 있도록 한다.
 
     Raises ``ZapNotAvailableError`` (from ``app.services.zap_util``) when ZAP
     cannot be reached — callers should catch that and degrade to httpx-only.
@@ -50,6 +57,8 @@ def open_zap_transport(raw_config: dict[str, Any]) -> tuple[Any, ZapTransport, s
     zap_cfg = raw_config.get("zap") or {}
     proxy = ensure_zap_proxy(zap_cfg)
     zap = connect_zap(proxy, str(zap_cfg.get("api_key") or ""))
+    if auth:
+        apply_auth_to_zap(zap, auth)
     return zap, ZapTransport(zap), proxy
 
 
