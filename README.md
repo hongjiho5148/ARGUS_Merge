@@ -49,7 +49,6 @@ SK쉴더스 WEB·API 개발보안 가이드의 8개 챕터 28개 체크리스트
 |---|---|
 | 🔍 **28개 항목 자동 진단** | XSS·CSRF, SQL Injection, IDOR·권한상승, SSRF, 세션·쿠키 조작 등 SK쉴더스 가이드 8개 챕터를 카탈로그로 관리하고 항목별 독립 모듈로 진단 |
 | 🌐 **API 인벤토리 자동 수집** | OpenAPI/Swagger 명세 또는 URL·API 리스트를 입력받아 진단 대상 엔드포인트 트리를 빌드·검증(Verify) |
-| 🤖 **AI 기반 이상 징후 해석** | 파라미터·Hidden 필드 조작 진단(1-3)에서 규칙 기반으로 1차 탐지된 이상 징후를 Claude(또는 로컬 Ollama)로 해석해 실취약점 여부·심각도·조치 방안을 자동 생성. LLM 장애 시에도 규칙 기반 결과로 즉시 폴백해 탐지 자체는 영향받지 않도록 설계 |
 | 📸 **증거 자동 캡처** | 취약점 발견 시 실제 브라우저 창을 띄워 요청·응답 과정을 캡처. 캡처 전 Authorization/Cookie/토큰 값은 자동 마스킹 |
 | 📄 **보고서 자동 생성** | 진단 결과를 집계해 심각도별 통계와 함께 PDF 보고서를 자동 생성 |
 | 🔁 **다중 계정 기반 권한 진단** | 두 개의 테스트 계정을 자동으로 오가며 수직·수평 권한상승, IDOR을 재현 |
@@ -68,14 +67,21 @@ SK쉴더스 WEB·API 개발보안 가이드의 8개 챕터 28개 체크리스트
 
 ## 🛠️ 기술 스택
 
-**Backend**
-`Python 3.12` · `FastAPI` · `Uvicorn` · `Playwright` (증거 캡처·PDF 렌더링) · `httpx` / `requests` · `OWASP ZAP API` · `ReportLab` / `pypdf` · `Anthropic Claude` / `Ollama` (LLM 해석)
-
-**Frontend**
-`React 19` · `TypeScript` · `Vite` · `Tailwind CSS` · `lucide-react`
-
-**Infra / DevOps**
-`Docker` / `Docker Compose` · `AWS` (EC2 · ALB · Route53 · ACM · S3 · ECR · Secrets Manager · SSM) · `Terraform` · `GitHub Actions` (OIDC 기반 CI/CD)
+| 구분 | 기술 | 용도 |
+|---|---|---|
+| **Backend** | `Python 3.12` · `FastAPI` · `Uvicorn` | REST API 서버, 진단 모듈 실행 |
+| | `httpx` · `requests` | 진단 요청 전송, 응답 비교 분석 |
+| | `OWASP ZAP` | 액티브 스캔 연동 |
+| | `Playwright` | 증거 화면 캡처, HTML → PDF 변환 |
+| | `ReportLab` · `pypdf` | PDF 보고서 생성·처리 |
+| **Frontend** | `React 19` · `TypeScript` · `Vite` | 진단 대시보드 UI |
+| | `Tailwind CSS` · `lucide-react` | 스타일링, 아이콘 |
+| | `Nginx` | 정적 파일 서빙 (프로덕션 컨테이너) |
+| **Infra** | `AWS` — EC2 · ALB · Route53 · ACM | 서비스 호스팅, HTTPS 라우팅 |
+| | `AWS` — S3 · ECR · Secrets Manager · SSM | 리포트 저장, 이미지 레지스트리, 시크릿 주입, 원격 배포 |
+| | `Terraform` | 인프라 코드화 (IaC) |
+| **DevOps** | `Docker` · `Docker Compose` | 컨테이너 기반 실행·배포 |
+| | `GitHub Actions` | OIDC 기반 CI/CD |
 
 ---
 
@@ -91,8 +97,6 @@ flowchart LR
     E --> F["📄 보고서 자동 생성\nHTML → PDF"]
     F --> G[["📊 대시보드 표시\n+ PDF 다운로드"]]
 ```
-
-1-3(파라미터·Hidden 필드 조작) 항목은 규칙 기반 1차 탐지 이후, Claude/Ollama가 결과를 해석해 취약점 여부와 조치 방안을 덧붙이는 단계가 추가로 들어갑니다. LLM 호출이 실패하거나 지연되어도 규칙 기반 판정 결과는 유실되지 않도록 타임아웃과 폴백을 명시적으로 처리했습니다.
 
 ---
 
@@ -114,7 +118,6 @@ flowchart TB
     end
 
     ZAP[("OWASP ZAP")]
-    LLM[("Claude API /\nOllama")]
     TARGET[["진단 대상 서비스\n(Onde 등)"]]
 
     FE <--> API
@@ -122,7 +125,6 @@ flowchart TB
     SVC --> INV
     SVC --> DIAG
     DIAG -->|"active scan"| ZAP
-    DIAG -->|"1-3 결과 해석"| LLM
     DIAG -->|"진단 요청"| TARGET
     DIAG --> CAP
     CAP -->|"증거"| TARGET
@@ -152,7 +154,6 @@ flowchart TB
 
 ### 요구 사항
 - Docker / Docker Compose
-- (선택) `ANTHROPIC_API_KEY` — 1-3 모듈 LLM 해석 기능 사용 시
 
 ### 로컬 실행
 
