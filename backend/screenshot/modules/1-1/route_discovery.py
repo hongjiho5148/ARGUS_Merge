@@ -58,23 +58,38 @@ def _read_yaml(path: Path) -> dict[str, Any]:
         return {}
 
 
-def frontend_base_url() -> str:
+_FALLBACK_FRONTEND_BASE = "http://localhost:5173"
+_DEFAULT_FRONTEND_PORTS = ("5173", "5174")
+
+
+def _configured_frontend_base() -> str:
     explicit = str(os.getenv("ARGUS_SCREENSHOT_FRONTEND_BASE") or "").strip()
     if explicit:
-        return explicit.rstrip("/")
+        return explicit
 
     root = _backend_root()
     for name in ("config.docker.yaml", "config.yaml"):
         cfg = _read_yaml(root / name)
         base = str(((cfg.get("inventory") or {}).get("markdown") or {}).get("frontend_base_url") or "").strip()
         if base:
-            return _docker_reachable_url(base).rstrip("/")
+            return base
+    return ""
+
+
+def frontend_base_url() -> str:
+    explicit = str(os.getenv("ARGUS_SCREENSHOT_FRONTEND_BASE") or "").strip()
+    if explicit:
+        return explicit.rstrip("/")
+
+    configured = _configured_frontend_base()
+    if configured:
+        return _docker_reachable_url(configured).rstrip("/")
 
     discovered = _frontend_base_from_api_tree()
     if discovered:
         return _docker_reachable_url(discovered).rstrip("/")
 
-    return _docker_reachable_url("http://localhost:5173").rstrip("/")
+    return _docker_reachable_url(_FALLBACK_FRONTEND_BASE).rstrip("/")
 
 
 def _docker_reachable_url(raw: str) -> str:
@@ -251,7 +266,11 @@ def _is_frontend_endpoint(endpoint: dict[str, Any]) -> bool:
     if "frontend" in sources.lower():
         return True
     base = str(endpoint.get("base_url") or endpoint.get("url") or "").lower()
-    return ":5173" in base or ":5174" in base
+    ports = set(_DEFAULT_FRONTEND_PORTS)
+    configured_port = urlsplit(_configured_frontend_base()).port
+    if configured_port:
+        ports.add(str(configured_port))
+    return any(f":{port}" in base for port in ports)
 
 
 def _extract_internal_links(page, base_netloc: str) -> list[str]:

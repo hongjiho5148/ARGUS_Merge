@@ -58,7 +58,8 @@ def _runtime_url(url: str) -> str:
             )
         )
     if not sys.platform.startswith("linux") and parts.hostname == "host.docker.internal":
-        return urlunsplit((parts.scheme or "http", "localhost:8080", parts.path, parts.query, parts.fragment))
+        netloc = f"localhost:{parts.port}" if parts.port else "localhost"
+        return urlunsplit((parts.scheme or "http", netloc, parts.path, parts.query, parts.fragment))
     return str(url or "")
 
 
@@ -204,28 +205,51 @@ def _path_of_url(url: str) -> str:
     return urlsplit(str(url or "")).path or "/"
 
 
-_LOGIN_TRIGGER_WORDS = ("로그인", "login", "sign in", "log in")
+_UI_LOGIN_DEFAULTS: dict[str, Any] = {
+    "trigger_words": ["로그인", "login", "sign in", "log in"],
+    "container_selector": '[class*="modal" i], [role="dialog"]',
+    "email_selector": 'input[type="email"]',
+    "password_selector": 'input[type="password"]',
+    "role_landing_paths": {"seller": "/seller", "admin": "/admin"},
+    "error_paths": ["/401", "/403"],
+    "api_path_marker": "/api/",
+}
+
+
+def _ui_login_config() -> dict[str, Any]:
+    """UI-login assumptions (login trigger text, form selectors, per-role
+    landing pages, error routes) are target-app conventions, so they can be
+    overridden under ``screenshot.ui_login`` in config.yaml; anything not set
+    keeps the default above."""
+    merged = dict(_UI_LOGIN_DEFAULTS)
+    for name in ("config.docker.yaml", "config.yaml"):
+        override = ((_read_yaml(_backend_root() / name).get("screenshot") or {}).get("ui_login")) or {}
+        if override:
+            merged.update({key: value for key, value in override.items() if value})
+            break
+    return merged
 
 
 def _normalize_wanted_role(role: str | None) -> str:
     return str(role or "").strip().lower().replace("role_", "")
 
 
-def _role_matches_landing(wanted: str, landed_path: str) -> bool:
+def _role_matches_landing(wanted: str, landed_path: str, cfg: dict[str, Any] | None = None) -> bool:
     """The app itself redirects to a role-specific default page right after
-    login (SELLER -> /seller, admin-ish -> /admin, everyone else -> /) — use
-    that as the ground truth for "is this the right account", since the
-    saved test accounts have no role field to read directly. ``wanted`` is a
-    finding's ``account_role`` (USER / SELLER / SUPER_ADMIN / GENERAL_ADMIN /
-    ...), matched by category so any admin-ish role maps to the /admin
-    landing and any non-seller/non-admin role is treated as a normal user."""
-    if landed_path in ("/401", "/403"):
+    login — use that as the ground truth for "is this the right account",
+    since the saved test accounts have no role field to read directly.
+    ``wanted`` is a finding's ``account_role`` (USER / SELLER / SUPER_ADMIN /
+    ...), matched by category via the configured ``role_landing_paths`` (any
+    role not listed is treated as a normal user who must NOT land on one of
+    those role-specific pages)."""
+    cfg = cfg or _ui_login_config()
+    if landed_path in cfg["error_paths"]:
         return False
-    if "seller" in wanted:
-        return landed_path.startswith("/seller")
-    if "admin" in wanted:
-        return landed_path.startswith("/admin")
-    return not (landed_path.startswith("/seller") or landed_path.startswith("/admin"))
+    landing_paths = cfg["role_landing_paths"]
+    for role_key, landing in landing_paths.items():
+        if role_key in wanted:
+            return landed_path.startswith(landing)
+    return not any(landed_path.startswith(landing) for landing in landing_paths.values())
 
 
 def login_via_ui(page, account_role: str | None, victim_email: str | None = None) -> dict[str, Any]:
@@ -250,6 +274,7 @@ def login_via_ui(page, account_role: str | None, victim_email: str | None = None
     if not credentials:
         return {"ok": False, "reason": "no saved test accounts found"}
 
+    cfg = _ui_login_config()
     wanted = _normalize_wanted_role(account_role)
     victim = str(victim_email or "").strip().lower()
     # If the finding's own evidence names the exact victim account (a
@@ -273,7 +298,7 @@ def login_via_ui(page, account_role: str | None, victim_email: str | None = None
 
     def _on_response(response: Any) -> None:
         try:
-            if response.status >= 400 and "/api/" in response.url:
+            if response.status >= 400 and cfg["api_path_marker"] in response.url:
                 api_errors.append({"url": response.url, "status": response.status})
                 _log(f"api error during login: {response.status} {response.url}")
         except Exception:
@@ -296,7 +321,7 @@ def login_via_ui(page, account_role: str | None, victim_email: str | None = None
                 continue
 
             trigger = None
-            for word in _LOGIN_TRIGGER_WORDS:
+            for word in cfg["trigger_words"]:
                 candidate = page.get_by_text(word, exact=False)
                 try:
                     if candidate.count():
@@ -318,9 +343,9 @@ def login_via_ui(page, account_role: str | None, victim_email: str | None = None
                 # inside the modal clicks the wrong thing (previously: a
                 # search button behind the modal backdrop, timing out instead
                 # of submitting the login form).
-                modal = page.locator('[class*="modal" i], [role="dialog"]').last
-                email_input = modal.locator('input[type="email"]').first
-                password_input = modal.locator('input[type="password"]').first
+                modal = page.locator(cfg["container_selector"]).last
+                email_input = modal.locator(cfg["email_selector"]).first
+                password_input = modal.locator(cfg["password_selector"]).first
                 email_input.fill(credential.email, timeout=3000)
                 password_input.fill(credential.password, timeout=3000)
                 # Press Enter in the password field to submit the <form>
@@ -334,7 +359,7 @@ def login_via_ui(page, account_role: str | None, victim_email: str | None = None
 
             still_on_login_form = False
             try:
-                still_on_login_form = page.locator('input[type="password"]').first.is_visible(timeout=500)
+                still_on_login_form = page.locator(cfg["password_selector"]).first.is_visible(timeout=500)
             except Exception:
                 pass
             # "Password field is gone" is not proof of a successful login —
@@ -363,9 +388,9 @@ def login_via_ui(page, account_role: str | None, victim_email: str | None = None
                     f"({login_error['status']} {login_error['url']}) — treating as a "
                     f"failed login, not a role mismatch"
                 )
-            elif landed_path == "/403" and api_errors:
+            elif landed_path in cfg["error_paths"] and api_errors:
                 _log(
-                    f"{credential.email} landed on /403 — likely caused by "
+                    f"{credential.email} landed on {landed_path} — likely caused by "
                     f"a *different* API error, not the login itself: {api_errors}"
                 )
             # An exact victim-email match is the strongest signal — accept it
@@ -377,7 +402,7 @@ def login_via_ui(page, account_role: str | None, victim_email: str | None = None
                 result["attempts"] = len(attempts)
                 _log(f"logged in as victim {credential.email} (exact email match)")
                 return result
-            if result["ok"] and not victim and _role_matches_landing(wanted, landed_path):
+            if result["ok"] and not victim and _role_matches_landing(wanted, landed_path, cfg):
                 result["role_matched"] = True
                 result["matched_by"] = "role"
                 result["attempts"] = len(attempts)

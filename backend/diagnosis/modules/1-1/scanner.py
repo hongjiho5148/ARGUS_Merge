@@ -34,11 +34,6 @@ def _load_sibling(name: str):
     return mod
 
 
-auth = _load_sibling("auth")
-openapi_utils = _load_sibling("openapi_utils")
-payloads = _load_sibling("payloads")
-rules = _load_sibling("rules")
-zap_adapter = _load_sibling("zap_adapter")
 zap_runner = _load_sibling("zap_runner")
 
 
@@ -417,6 +412,10 @@ def _group_csrf_findings(findings: list[dict]) -> list[dict]:
 def run_g11_scan(ctx, module_dir: Path) -> ScanResult:
     raw_config = getattr(ctx, "raw_config", {}) or {}
     g11_config = raw_config.get("diagnosis_1_1") or raw_config.get("g11") or {}
+    zap_runner.extra_skip_path_markers = tuple(
+        str(marker).lower() for marker in (g11_config.get("extra_skip_path_markers") or []) if str(marker).strip()
+    )
+    zap_runner.session_cookie_fallback = str(g11_config.get("session_cookie_fallback") or "accessToken")
     target_url = g11_config.get("target_url") or raw_config.get("target_url")
     auth_tokens = g11_config.get("auth_tokens") or raw_config.get("auth_tokens") or []
 

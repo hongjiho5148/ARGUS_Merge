@@ -178,6 +178,32 @@ docker compose up -d --build
 
 ---
 
+## 🎛️ 대상 서비스별 설정
+
+진단 대상의 URL 규칙·역할 체계·로그인 화면이 다를 때 코드 수정 없이 `config.yaml`로 조정합니다. 지정하지 않으면 기본값을 사용합니다.
+
+```yaml
+diagnosis_1_1:
+  extra_skip_path_markers: ["/withdraw"]   # 스캔에서 제외할 경로 조각 (상태 변경·계정 유틸 API)
+  session_cookie_fallback: "JSESSIONID"    # 세션 쿠키명을 자동 탐지하지 못했을 때 사용할 이름
+
+diagnosis_4_5:
+  admin_path_markers: ["/backoffice"]      # 관리자 API로 볼 경로 조각 (기본: admin·manage 계열)
+  denial_keywords: ["접근 불가"]            # 거부 응답으로 볼 문구 추가
+  privilege_param_keywords: ["grade"]      # Mass Assignment 대상 파라미터명 추가
+  privilege_payloads: ["OWNER"]            # 주입할 권한 값 추가
+
+screenshot:
+  ui_login:                                 # 증거 캡처용 UI 로그인 가정
+    trigger_words: ["로그인", "Sign in"]
+    email_selector: 'input[name="email"]'
+    password_selector: 'input[type="password"]'
+    role_landing_paths: {seller: "/seller", admin: "/admin"}
+    error_paths: ["/401", "/403"]
+```
+
+---
+
 ## 📂 프로젝트 구조
 
 ```

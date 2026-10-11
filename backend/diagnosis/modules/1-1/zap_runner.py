@@ -96,6 +96,23 @@ def _bounded_get(url, *, headers=None, params=None, timeout=4, max_bytes=524288,
 
 result_dir_override = None
 
+# Set per scan by scanner.py from the ``diagnosis_1_1`` config block, so
+# target-specific endpoint names / cookie names don't have to live in code.
+extra_skip_path_markers: tuple = ()
+session_cookie_fallback = "accessToken"
+
+STATE_TRANSITION_PATH_MARKERS = (
+    "/close", "/reopen", "/approve", "/reject", "/suspend", "/ban", "/unban",
+    "/cancel", "/delete", "/payment",
+)
+ACCOUNT_UTILITY_PATH_MARKERS = (
+    "/auth/", "/login", "/logout", "/password",
+)
+STORED_SCAN_SKIP_PATH_MARKERS = (
+    "/auth/", "/login", "/logout",
+    "/email/send", "/email/verify", "/check-email", "/check-nickname",
+)
+
 def update_status(is_running=None, progress=None, message=None, result_file=None, log_file=None, total_alerts=None):
     if is_running is not None: scan_status["is_running"] = is_running
     if progress is not None: scan_status["progress"] = progress
@@ -167,7 +184,7 @@ def get_payload_reflection(payload, response_body, baseline_body=None):
         except Exception:
             active_text = response_body
 
-    payload_variants = {
+    payload_variants = dict.fromkeys([
         payload,
         normalize_reflection_text(payload),
         html.escape(payload),
@@ -179,7 +196,7 @@ def get_payload_reflection(payload, response_body, baseline_body=None):
         payload.replace("<", "\\u003C").replace(">", "\\u003E"),
         payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("/", "\\/"),
         payload.replace("<", "\\u003C").replace(">", "\\u003E").replace("/", "\\/"),
-    }
+    ])
     body_variants = {
         active_text,
         normalize_reflection_text(active_text),
@@ -951,7 +968,7 @@ def detect_session_cookie(target_url: str, auth_token: str, validated_endpoints:
         ]
         probe_paths = auth_paths if auth_paths else list(validated_endpoints.keys())[:5]
     else:
-        probe_paths = ["/api/v1/auth/login", "/api/v1/members/me", "/api/v1/posts", "/api/v1"]
+        probe_paths = ["/"]
 
     headers = {}
     if auth_token:
@@ -973,7 +990,7 @@ def detect_session_cookie(target_url: str, auth_token: str, validated_endpoints:
         except Exception:
             continue
 
-    return "accessToken"
+    return session_cookie_fallback
 
 def run_zap_scan(target_url: str, auth_tokens: list):
     """
@@ -1193,7 +1210,10 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                 if not resolved_ep_path:
                     continue
                 normalized_path = resolved_ep_path.lower()
-                if any(marker in normalized_path for marker in ["/auth/", "/login", "/logout", "/password", "/payment", "/cancel", "/approve", "/reject", "/delete"]):
+                if any(
+                    marker in normalized_path
+                    for marker in (*ACCOUNT_UTILITY_PATH_MARKERS, *STATE_TRANSITION_PATH_MARKERS, *extra_skip_path_markers)
+                ):
                     continue
 
                 headers, req_params, req_json, req_data, req_files = request_parts_from_openapi(
@@ -2079,16 +2099,9 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                 return True, "Request body is restricted to sensitive credential modification only"
 
             # 4. 그 외 단순 상태 변경(승인/반려 등)이나 프로필 수정(/me/profile)은 스캔 진행 허용
-            state_markers = [
-                "/close",
-                "/reopen",
-                "/approve",
-                "/reject",
-                "/suspend",
-                "/ban",
-                "/unban",
-            ]
-            if method_upper == "PATCH" and any(marker in normalized_path for marker in state_markers):
+            if any(marker in normalized_path for marker in extra_skip_path_markers):
+                return True, "Endpoint matches a configured skip marker (diagnosis_1_1.extra_skip_path_markers)"
+            if method_upper == "PATCH" and any(marker in normalized_path for marker in STATE_TRANSITION_PATH_MARKERS):
                 return True, "State-transition endpoint is protected from active scanning"
 
             return False, ""
@@ -2706,15 +2719,7 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                     if method.lower() in {"post", "put", "patch"}:
                         # 고도화 2: 1종이 아닌 상위 4종의 주요 XSS 변형군으로 저장 시도
                         path_lower_for_stored = str(path or api_url).lower()
-                        stored_skip_markers = (
-                            "/auth/",
-                            "/login",
-                            "/logout",
-                            "/email/send",
-                            "/email/verify",
-                            "/check-email",
-                            "/check-nickname",
-                        )
+                        stored_skip_markers = (*STORED_SCAN_SKIP_PATH_MARKERS, *extra_skip_path_markers)
                         if baseline_status is None or baseline_status >= 400:
                             print(
                                 f"[STORED XSS DEBUG] skip stored scan -> {method.upper()} {api_url}: "
@@ -2927,7 +2932,7 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                                                 # [Strict Stored XSS Verification]
                                                 # 1) 개별 조회 주소(GET /api/v1/posts/4)인 경우 -> 신뢰 가능
                                                 # 2) 목록 조회 주소(GET /api/v1/posts)인 경우 -> 응답 본문 내에 방금 생성한 resource_id가 포함되어 있어야 하며,
-                                                #    그 resource_id 근처(예: 300자 이내)에 stored_payload가 발견되는지 검증하여 타 API 영향에 따른 오탐 차단
+                                                #    그 resource_id 근처(앞 100자 ~ 뒤 350자)에 stored_payload가 발견되는지 검증하여 타 API 영향에 따른 오탐 차단
                                                 is_legit_stored_xss = False
                                                 if resource_id:
                                                     str_res_id = str(resource_id)

@@ -7,6 +7,7 @@ import requests
 import re
 from datetime import datetime
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from app.services.auth_probe_service import login_all_accounts
 from diagnosis.context import DiagnosisContext
@@ -26,6 +27,37 @@ from g45_discovery import build_resource_inventory, active_discovery_inventory
 from inventory.net import probe_url
 
 VALID_PROBE_MODES = {"base_only", "sample", "full"}
+
+_ADMIN_PATH_RE = re.compile(r"(^|/)(admin|manage|management)[a-z0-9_\-]*(/|$)")
+_DENIAL_KEYWORDS = [
+    "권한", "접근 권한", "인증이 필요", "denied", "access denied", "unauthorized",
+    "unauthenticated", "forbidden", "not allowed", "login required", "fail",
+]
+_PRIVILEGE_PARAM_KEYWORDS = [
+    "role", "admin", "authority", "group", "usertype", "level",
+    "permission", "privilege", "scope", "superuser",
+]
+_PRIVILEGE_PAYLOADS = [
+    "ADMIN", "admin", "ROLE_ADMIN", "role_admin", "SUPER_ADMIN", "ROLE_SUPER_ADMIN",
+    "administrator", "root", "true", "1",
+]
+
+
+def _extend_unique(defaults: list[str], extra) -> list[str]:
+    merged = list(defaults)
+    for item in extra if isinstance(extra, list) else []:
+        text = str(item).strip()
+        if text and text not in merged:
+            merged.append(text)
+    return merged
+
+
+def _is_admin_endpoint(ep: dict, extra_markers: list[str]) -> bool:
+    path = str(ep.get("path", "")).lower()
+    if _ADMIN_PATH_RE.search(path) or any(marker.lower() in path for marker in extra_markers):
+        return True
+    host = (urlsplit(str(ep.get("base_url", ""))).hostname or "").lower()
+    return host.split(".")[0].startswith("admin")
 
 
 def _positive_int(value, default: int | None = None) -> int | None:
@@ -76,6 +108,10 @@ def run_g45_scan(ctx: DiagnosisContext, module_dir: Path) -> ScanResult:
     sample_size = _positive_int(options.get("sample_size"), 50)
     max_endpoints = _positive_int(options.get("max_endpoints"))
     timeout = _float_in_range(options.get("timeout"), 5.0)
+    admin_path_markers = _extend_unique([], options.get("admin_path_markers"))
+    denial_keywords = _extend_unique(_DENIAL_KEYWORDS, options.get("denial_keywords"))
+    privilege_param_keywords = _extend_unique(_PRIVILEGE_PARAM_KEYWORDS, options.get("privilege_param_keywords"))
+    privilege_payloads = _extend_unique(_PRIVILEGE_PAYLOADS, options.get("privilege_payloads"))
 
     auth_cfg = raw.get("auth") or {}
     accounts = auth_cfg.get("accounts") or []
@@ -119,7 +155,7 @@ def run_g45_scan(ctx: DiagnosisContext, module_dir: Path) -> ScanResult:
         max_endpoints=max_endpoints,
     )
     
-    admin_endpoints = [ep for ep in endpoints if "/admin/" in ep.get("path", "").lower() or "/manage/" in ep.get("path", "").lower()]
+    admin_endpoints = [ep for ep in endpoints if _is_admin_endpoint(ep, admin_path_markers)]
     stats["admin_endpoints"] = len(admin_endpoints)
     stats["scanned_endpoints"] = len(endpoints)
     stats["total_inventory_endpoints"] = len(all_endpoints)
@@ -164,8 +200,7 @@ def run_g45_scan(ctx: DiagnosisContext, module_dir: Path) -> ScanResult:
                 res = requests.request(method, probe_url(url), headers=user_a_headers, timeout=timeout, verify=False)
                 if res.status_code in {200, 201, 204}:
                     res_text_lower = res.text.lower()
-                    error_keywords = ["권한", "denied", "unauthorized", "fail", "not allowed", "forbidden", "unauthenticated"]
-                    if any(k in res_text_lower for k in error_keywords):
+                    if any(k.lower() in res_text_lower for k in denial_keywords):
                         continue
                         
                     _log(f"    -> {method} {url} : Vulnerable to Vertical PrivEsc!")
@@ -434,8 +469,8 @@ def run_g45_scan(ctx: DiagnosisContext, module_dir: Path) -> ScanResult:
 
     # [Phase 4] Targeted Mass Assignment (명시적 권한 파라미터 조작)
     _log("Phase 4: Targeted Mass Assignment Testing")
-    target_param_keywords = ["role", "admin", "authority", "group", "usertype", "level"]
-    admin_payloads = ["ADMIN", "admin", "ROLE_ADMIN", "role_admin", "SUPER_ADMIN", "true", "1"]
+    target_param_keywords = privilege_param_keywords
+    admin_payloads = privilege_payloads
     
     for ep in endpoints:
         method = ep.get("method", "GET").upper()
