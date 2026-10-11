@@ -32,6 +32,152 @@ csrf_scanner = _load_sibling_module("csrf_scanner")
 payload_catalog = _load_sibling_module("payloads")
 XSS_PAYLOADS = payload_catalog.XSS_PAYLOADS
 
+# Helpers split out of this file; loaded as siblings (the module directory name is not importable).
+xss_judgement = _load_sibling_module("xss_judgement")
+(
+    normalize_reflection_text,
+    get_payload_reflection,
+    is_payload_reflected,
+    find_json_keypaths_containing,
+    normalize_response_param_path,
+    infer_reflected_response_params,
+    detect_xss_reflection_context,
+    classify_xss_response,
+) = (
+    xss_judgement.normalize_reflection_text,
+    xss_judgement.get_payload_reflection,
+    xss_judgement.is_payload_reflected,
+    xss_judgement.find_json_keypaths_containing,
+    xss_judgement.normalize_response_param_path,
+    xss_judgement.infer_reflected_response_params,
+    xss_judgement.detect_xss_reflection_context,
+    xss_judgement.classify_xss_response,
+)
+schema_payloads = _load_sibling_module("schema_payloads")
+(
+    resolve_schema_ref,
+    extract_injectable_keypaths,
+    schema_for_keypath,
+    set_nested_value_by_keypath,
+    get_schema_type,
+    normalized_field_name,
+    is_sensitive_or_nontext_field,
+    is_xss_injectable_schema,
+    looks_like_file_field,
+    payloads_for_xss_field,
+    make_unique_xss_payload,
+    default_value_for_schema,
+    default_value_for_query_param,
+    _is_profile_endpoint,
+    _is_login_critical_field,
+    stabilize_profile_payload,
+    preserve_current_profile_values,
+    build_default_payload_from_schema,
+    build_required_payload_from_schema,
+    build_query_defaults_from_details,
+) = (
+    schema_payloads.resolve_schema_ref,
+    schema_payloads.extract_injectable_keypaths,
+    schema_payloads.schema_for_keypath,
+    schema_payloads.set_nested_value_by_keypath,
+    schema_payloads.get_schema_type,
+    schema_payloads.normalized_field_name,
+    schema_payloads.is_sensitive_or_nontext_field,
+    schema_payloads.is_xss_injectable_schema,
+    schema_payloads.looks_like_file_field,
+    schema_payloads.payloads_for_xss_field,
+    schema_payloads.make_unique_xss_payload,
+    schema_payloads.default_value_for_schema,
+    schema_payloads.default_value_for_query_param,
+    schema_payloads._is_profile_endpoint,
+    schema_payloads._is_login_critical_field,
+    schema_payloads.stabilize_profile_payload,
+    schema_payloads.preserve_current_profile_values,
+    schema_payloads.build_default_payload_from_schema,
+    schema_payloads.build_required_payload_from_schema,
+    schema_payloads.build_query_defaults_from_details,
+)
+request_helpers = _load_sibling_module("request_helpers")
+(
+    is_resource_identifier_key,
+    is_resource_identifier_value,
+    extract_id_from_response,
+    extract_id_near_payload,
+    extract_id_from_url,
+    extract_id_from_location,
+    extract_session_cookie_name,
+    check_csrf_token_absence,
+    build_cookie_header_from_account,
+    build_auth_headers,
+    jwt_debug_summary,
+    decode_jwt_claims,
+    summarize_response_for_log,
+    has_unsafe_samesite_cookie,
+) = (
+    request_helpers.is_resource_identifier_key,
+    request_helpers.is_resource_identifier_value,
+    request_helpers.extract_id_from_response,
+    request_helpers.extract_id_near_payload,
+    request_helpers.extract_id_from_url,
+    request_helpers.extract_id_from_location,
+    request_helpers.extract_session_cookie_name,
+    request_helpers.check_csrf_token_absence,
+    request_helpers.build_cookie_header_from_account,
+    request_helpers.build_auth_headers,
+    request_helpers.jwt_debug_summary,
+    request_helpers.decode_jwt_claims,
+    request_helpers.summarize_response_for_log,
+    request_helpers.has_unsafe_samesite_cookie,
+)
+http_evidence = _load_sibling_module("http_evidence")
+(
+    format_http_request,
+    find_containing_record,
+    windowed_body,
+    format_http_response,
+    extract_request_parts,
+) = (
+    http_evidence.format_http_request,
+    http_evidence.find_containing_record,
+    http_evidence.windowed_body,
+    http_evidence.format_http_response,
+    http_evidence.extract_request_parts,
+)
+path_param_helpers = _load_sibling_module("path_param_helpers")
+(
+    extract_id_candidates_from_json,
+    resource_hint_for_param,
+    plural_resource_hints,
+    resolve_path_with_known_values,
+    path_param_matches_identifier,
+    extract_id_from_response_or_location,
+    extract_identity_value,
+) = (
+    path_param_helpers.extract_id_candidates_from_json,
+    path_param_helpers.resource_hint_for_param,
+    path_param_helpers.plural_resource_hints,
+    path_param_helpers.resolve_path_with_known_values,
+    path_param_helpers.path_param_matches_identifier,
+    path_param_helpers.extract_id_from_response_or_location,
+    path_param_helpers.extract_identity_value,
+)
+role_helpers = _load_sibling_module("role_helpers")
+(
+    account_role_rank,
+    is_admin_account,
+    account_role_text,
+    endpoint_role_priority,
+    resource_tokens_from_path,
+    reflected_near_resource_id,
+) = (
+    role_helpers.account_role_rank,
+    role_helpers.is_admin_account,
+    role_helpers.account_role_text,
+    role_helpers.endpoint_role_priority,
+    role_helpers.resource_tokens_from_path,
+    role_helpers.reflected_near_resource_id,
+)
+
 
 # 전역 스캔 상태 관리
 scan_status = {
@@ -149,510 +295,27 @@ def update_status(is_running=None, progress=None, message=None, result_file=None
 import difflib
 import copy
 
-def normalize_reflection_text(value: str = "") -> str:
-    if not value:
-        return ""
-    text = str(value)
-    for _ in range(2):
-        text = html.unescape(urllib.parse.unquote_plus(text))
-        text = (
-            text.replace("\\/", "/")
-                .replace("\\u003c", "<")
-                .replace("\\u003C", "<")
-                .replace("\\u003e", ">")
-                .replace("\\u003E", ">")
-                .replace("\\u002f", "/")
-                .replace("\\u002F", "/")
-        )
-    return text
 
-def get_payload_reflection(payload, response_body, baseline_body=None):
-    if not payload or not response_body:
-        return None
 
-    # Baseline이 지정된 경우 diff 분석을 수행해 새로 추가된 영역만 분리
-    active_text = response_body
-    if baseline_body:
-        try:
-            # difflib.ndiff를 활용해 추가(+)된 라인 및 문자들을 결합하여 새로 유입된 문자열 추출
-            diff = difflib.ndiff(baseline_body.splitlines(keepends=True), response_body.splitlines(keepends=True))
-            added_lines = [line[2:] for line in diff if line.startswith('+ ')]
-            active_text = "".join(added_lines)
-            if not active_text.strip():
-                # 추가된 신규 텍스트가 없는 경우 반사되지 않은 것으로 확정
-                return None
-        except Exception:
-            active_text = response_body
 
-    payload_variants = dict.fromkeys([
-        payload,
-        normalize_reflection_text(payload),
-        html.escape(payload),
-        html.escape(payload, quote=False),
-        urllib.parse.quote(payload),
-        urllib.parse.quote_plus(payload),
-        payload.replace("/", "\\/"),
-        payload.replace("<", "\\u003c").replace(">", "\\u003e"),
-        payload.replace("<", "\\u003C").replace(">", "\\u003E"),
-        payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("/", "\\/"),
-        payload.replace("<", "\\u003C").replace(">", "\\u003E").replace("/", "\\/"),
-    ])
-    body_variants = {
-        active_text,
-        normalize_reflection_text(active_text),
-    }
 
-    for body in body_variants:
-        for variant in payload_variants:
-            normalized_variant = normalize_reflection_text(variant)
-            if normalized_variant and normalized_variant.lower() in body.lower():
-                return variant
-    return None
 
-def is_payload_reflected(payload, response_body, baseline_body=None):
-    return get_payload_reflection(payload, response_body, baseline_body) is not None
 
-def find_json_keypaths_containing(value, payload, prefix=""):
-    matches = []
-    if isinstance(value, dict):
-        for key, child in value.items():
-            path = f"{prefix}.{key}" if prefix else str(key)
-            matches.extend(find_json_keypaths_containing(child, payload, path))
-    elif isinstance(value, list):
-        for index, child in enumerate(value):
-            path = f"{prefix}.{index}" if prefix else str(index)
-            matches.extend(find_json_keypaths_containing(child, payload, path))
-    elif isinstance(value, str) and payload in value:
-        matches.append(prefix)
-    return matches
 
-def normalize_response_param_path(path):
-    parts = [part for part in str(path).split(".") if part and not part.isdigit()]
-    if parts and parts[0] in {"data", "items", "result", "results"}:
-        parts = parts[1:]
-    if parts and parts[0].endswith("s") and len(parts) > 1:
-        parts = parts[1:]
-    return ".".join(parts) if parts else path
 
-def infer_reflected_response_params(response, payload):
-    try:
-        body = response.json()
-    except Exception:
-        return []
-    params = []
-    for path in find_json_keypaths_containing(body, payload):
-        normalized = normalize_response_param_path(path)
-        if normalized and normalized not in params:
-            params.append(normalized)
-    return params
 
-def detect_xss_reflection_context(payload, response_body):
-    if not payload or not response_body:
-        return "unknown"
 
-    bodies = [
-        response_body,
-        html.unescape(response_body),
-        urllib.parse.unquote_plus(response_body),
-    ]
-    payload_re = re.escape(payload)
-    for body in bodies:
-        if re.search(r"<[^>]+\s[\w:-]+\s*=\s*(['\"])" + payload_re + r"\1", body, re.IGNORECASE):
-            return "HTML attribute"
-        if re.search(r">\s*" + payload_re + r"\s*<", body, re.IGNORECASE):
-            return "HTML body"
-        if re.search(r"(['\"])" + payload_re + r"\1", body, re.IGNORECASE):
-            return "JSON/String value"
-    return "encoded/reflected"
 
-def classify_xss_response(payload, response_body, content_type, method="GET", is_mutation=False, response_headers=None, baseline_body=None):
-    if not payload or not response_body:
-        return None
 
-    response_lower = response_body.lower()
-    decoded_response_body = normalize_reflection_text(response_body)
-    decoded_response_lower = decoded_response_body.lower()
-    content_type_lower = (content_type or "").lower()
-    source_indicators = ["location", "search", "document.cookie", "document.location", "url", "query", "param", "input"]
-    dom_sink_patterns = [
-        "document.write",
-        "document.writeln",
-        "innerhtml",
-        "outerhtml",
-        "insertadjacenthtml",
-        "eval(",
-        "settimeout(",
-        "setinterval(",
-        "window.location",
-        "document.location",
-        "location.href",
-        "appendchild",
-        "insertbefore",
-    ]
-    # 응답 본문에 페이로드가 실행 가능한 형태로 반사되었는지 판별하는 마커
-    executable_markers = ["<script", "</script>", "onerror=", "onload=", "onclick=", "javascript:", "<svg", "<img", "<iframe"]
 
-    reflected_variant = get_payload_reflection(payload, response_body, baseline_body)
-    has_payload_in_body = reflected_variant is not None
-    has_dom_sink = any(pattern in decoded_response_lower for pattern in dom_sink_patterns)
-    has_source_indicator = any(indicator in decoded_response_lower for indicator in source_indicators)
-    has_user_input_reference = "userinput" in response_lower or "input" in response_lower
-    has_executable_marker = any(marker in decoded_response_lower for marker in executable_markers)
 
-    # ── DOM XSS 의심 패턴 (정적 분석으로는 확정 불가 → Informational 강등) ──────────────
-    # DOM XSS 실제 탐지는 Playwright 헤드리스 브라우저를 통한 동적 실행 검증만 가능.
-    # 여기서는 "의심 패턴이 발견됨"을 리포팅하고 Playwright 위임 힌트를 남긴다.
-    if has_dom_sink and (has_source_indicator or has_user_input_reference) and (has_payload_in_body or has_executable_marker):
-        detected_sinks = ", ".join([p for p in dom_sink_patterns if p in response_lower])
-        return {
-            "kind": "dom_suspect",
-            "custom_type": "DOM_XSS_SUSPECT",
-            "risk": "Informational",
-            "confidence": "Low",
-            "alert": "[정적 분석] DOM XSS 의심 패턴 감지 — Playwright 동적 검증 필요",
-            "description": (
-                "응답 본문에서 DOM 삽입 지점과 사용자 입력 경로 신호가 동시에 발견되었습니다. "
-                "단, 정적 텍스트 분석으로는 실제 취약 여부를 확정할 수 없습니다. "
-                "Playwright 헤드리스 브라우저에서 페이지를 직접 로드하고 alert() 발화 여부를 모니터링하는 동적 검증이 필요합니다."
-            ),
-            "evidence": f"응답 본문에 DOM 삽입 지점({detected_sinks})이 감지되었습니다.",
-            "playwright_action": "url_param_injection",
-        }
 
-    if not has_payload_in_body:
-        return None
 
-    is_html_context = "html" in content_type_lower
-    is_json_context = "json" in content_type_lower
-    reflection_context = detect_xss_reflection_context(payload, response_body)
 
-    # ── Reflected XSS ──────────────────────────────────────────────────────────────────
-    # POST/PUT 등 쓰기 메서드라도 응답에 페이로드가 에코백 되면 Reflected XSS.
-    # 진짜 Stored XSS는 POST 저장 후 GET 재조회 응답에서만 판정 가능하며,
-    # 해당 로직은 run_zap_scan() 내부의 2단계 저장-재조회 루프에서 별도 처리한다.
-    if (is_html_context or is_json_context) and has_executable_marker:
-        if is_html_context:
-            risk = "Medium"
-            confidence = "High"
-            desc = (
-                "응답 본문에 XSS 공격 페이로드가 HTML 인코딩 없이 그대로 반사되었습니다. "
-                "프론트엔드에서 직접 화면에 출력하거나 innerHTML 등으로 이 값을 렌더링할 경우 브라우저 런타임에서 즉시 악성 스크립트가 실행됩니다. "
-                f"(Content-Type: {content_type}, Context: {reflection_context})"
-            )
-            sol = "특수 문자(<, >, &, \", ')가 입력되거나 출력되는 시점에 HTML Entity Escape 처리를 적용하여 브라우저가 스크립트로 오인하지 않도록 차단하십시오."
-        else:
-            # JSON context 내 반사 케이스 (프론트엔드 바인딩 위협)
-            risk = "Low"
-            confidence = "Medium"
-            desc = (
-                "요청으로 전송된 XSS 페이로드가 API 응답 JSON 데이터 내에 필터링 없이 그대로 출력되었습니다. "
-                "모던 프론트엔드 프레임워크(React, Vue 등)의 기본 이스케이프 정책 덕분에 브라우저에서의 실제 실행은 제한될 수 있습니다. "
-                "다만, dangerouslySetInnerHTML, v-html과 같은 안전하지 않은 속성 바인딩을 사용하거나, WebView/이메일 템플릿 등으로 활용 영역이 확장될 경우 즉시 XSS 공격 경로로 이어질 위험이 존재합니다. (서버 측의 2차 방어선 누락)"
-            )
-            sol = "프론트엔드 수준의 방어에만 의존하지 말고, 서버 측 인풋 유효성 검증 단(XssEscapeServletFilter 등) 또는 JSON Response 직렬화 단계에서 특수 문자 필터링을 적용하여 일관적인 데이터 보안 상태를 유지하십시오."
 
-        return {
-            "kind": "reflected",
-            "custom_type": "40012",
-            "risk": risk,
-            "confidence": confidence,
-            "alert": "Reflected Cross-Site Scripting (Reflected XSS) Vulnerability",
-            "description": desc,
-            "solution": sol,
-            "evidence": f"Response body reflected payload variant '{reflected_variant}' from original payload '{payload}'.",
-            "reflection_context": reflection_context,
-            "reflected_variant": reflected_variant,
-        }
 
-    return None
 
-def resolve_schema_ref(schema: dict, components: dict | None = None) -> dict:
-    if not isinstance(schema, dict):
-        return schema
-    ref = schema.get("$ref")
-    if not ref or not components:
-        return schema
-    if not ref.startswith("#/components/schemas/"):
-        return schema
-    schema_name = ref.rsplit("/", 1)[-1]
-    return components.get("schemas", {}).get(schema_name, schema)
 
-def extract_injectable_keypaths(schema: dict, prefix: str = "", components: dict | None = None) -> list[str]:
-    """JSON 스키마를 재귀적으로 탐색하여 string 타입의 모든 키 경로(Dot-notation)를 추출합니다."""
-    schema = resolve_schema_ref(schema, components)
-    paths = []
-    if not isinstance(schema, dict):
-        return paths
-
-    properties = schema.get("properties", {})
-    for k, v in properties.items():
-        full_key = f"{prefix}.{k}" if prefix else k
-        v = resolve_schema_ref(v, components)
-        p_type = get_schema_type(v, components)
-        
-        if is_xss_injectable_schema(v, k, components):
-            paths.append(full_key)
-        elif p_type == "object":
-            paths.extend(extract_injectable_keypaths(v, full_key, components))
-        elif p_type == "array":
-            # 배열 내 아이템이 객체인 경우 처리
-            items_schema = resolve_schema_ref(v.get("items", {}), components)
-            if isinstance(items_schema, dict) and get_schema_type(items_schema, components) == "object":
-                paths.extend(extract_injectable_keypaths(items_schema, f"{full_key}.0", components))
-    return paths
-
-def schema_for_keypath(schema: dict, keypath: str, components: dict | None = None) -> dict:
-    current = resolve_schema_ref(schema, components)
-    for part in str(keypath or "").split("."):
-        if not isinstance(current, dict):
-            return {}
-        current = resolve_schema_ref(current, components)
-        if part.isdigit():
-            current = resolve_schema_ref(current.get("items", {}), components)
-            continue
-        if get_schema_type(current, components) == "array":
-            current = resolve_schema_ref(current.get("items", {}), components)
-        properties = current.get("properties", {}) if isinstance(current, dict) else {}
-        current = resolve_schema_ref(properties.get(part, {}), components)
-    return current if isinstance(current, dict) else {}
-
-def set_nested_value_by_keypath(target_dict: dict, keypath: str, value: any) -> dict:
-    """점(.)으로 구분된 키 경로에 맞춰 중첩 딕셔너리에 값을 대입합니다."""
-    parts = keypath.split(".")
-    curr = target_dict
-    for idx, part in enumerate(parts[:-1]):
-        next_part = parts[idx + 1]
-        if isinstance(curr, list):
-            list_idx = int(part)
-            while len(curr) <= list_idx:
-                curr.append({} if not next_part.isdigit() else [])
-            curr = curr[list_idx]
-            continue
-        if part not in curr or not isinstance(curr[part], (dict, list)):
-            curr[part] = [] if next_part.isdigit() else {}
-        curr = curr[part]
-    last = parts[-1]
-    if isinstance(curr, list):
-        list_idx = int(last)
-        while len(curr) <= list_idx:
-            curr.append(None)
-        curr[list_idx] = value
-    else:
-        curr[last] = value
-    return target_dict
-
-def get_schema_type(schema: dict, components: dict | None = None) -> str:
-    schema = resolve_schema_ref(schema, components)
-    if not isinstance(schema, dict):
-        return "unknown"
-    schema_type = schema.get("type")
-    if isinstance(schema_type, list):
-        return next((t for t in schema_type if t != "null"), "unknown")
-    if schema_type:
-        return schema_type
-    for key in ["oneOf", "anyOf", "allOf"]:
-        variants = schema.get(key)
-        if isinstance(variants, list) and variants:
-            return get_schema_type(variants[0], components)
-    return "unknown"
-
-def normalized_field_name(param_name: str = "") -> str:
-    return re.sub(r"[^a-z0-9]", "", str(param_name or "").lower())
-
-def is_sensitive_or_nontext_field(param_name: str = "") -> bool:
-    pn = normalized_field_name(param_name)
-    sensitive_tokens = [
-        "password", "passwd", "pwd", "secret", "token", "accesstoken", "refreshtoken",
-        "authorization", "auth", "otp", "verificationcode", "emailcode", "csrf",
-        "session", "cookie", "credential", "key",
-    ]
-    strict_tokens = [
-        "phone", "tel", "mobile", "zipcode", "postcode", "birth",
-        "uuid", "number", "count", "amount", "price", "rate", "capacity",
-    ]
-    if any(token in pn for token in sensitive_tokens + strict_tokens):
-        return True
-    if pn in {"id", "ids"} or pn.endswith("id") or pn.endswith("ids"):
-        return True
-    if pn in {
-        "date", "datetime", "time", "timestamp", "startdate", "enddate",
-        "createdat", "updatedat", "deletedat", "openedat", "closedat",
-        "birthdate", "birthtime",
-    }:
-        return True
-    return False
-
-def is_xss_injectable_schema(schema: dict, param_name: str = "", components: dict | None = None) -> bool:
-    schema = resolve_schema_ref(schema, components)
-    if not schema and param_name and not is_sensitive_or_nontext_field(param_name):
-        schema = {"type": "string"}
-    if not isinstance(schema, dict):
-        return False
-    if is_sensitive_or_nontext_field(param_name):
-        return False
-    if schema.get("enum"):
-        return False
-    if get_schema_type(schema, components) != "string":
-        return False
-    if (schema.get("format") or "").lower() in {"date", "date-time", "byte", "binary", "uuid"}:
-        return False
-    return True
-
-def looks_like_file_field(param_name: str = "", schema: dict | None = None, components: dict | None = None) -> bool:
-    schema = resolve_schema_ref(schema or {}, components)
-    prop_type = get_schema_type(schema, components)
-    prop_format = (schema.get("format") or "").lower() if isinstance(schema, dict) else ""
-    items_schema = resolve_schema_ref(schema.get("items", {}), components) if isinstance(schema, dict) else {}
-    item_format = (items_schema.get("format") or "").lower() if isinstance(items_schema, dict) else ""
-    if prop_type == "string" and prop_format == "binary":
-        return True
-    if prop_type == "array" and item_format == "binary":
-        return True
-    field = normalized_field_name(param_name)
-    return any(token in field for token in ["image", "images", "photo", "photos", "file", "files", "upload", "attachment"])
-
-def payloads_for_xss_field(param_name: str = "", schema: dict | None = None, components: dict | None = None) -> list:
-    schema = resolve_schema_ref(schema or {}, components)
-    if not schema and param_name and not is_sensitive_or_nontext_field(param_name):
-        schema = {"type": "string"}
-    fmt = (schema.get("format") or "").lower() if isinstance(schema, dict) else ""
-    pn = normalized_field_name(param_name)
-
-    if is_sensitive_or_nontext_field(param_name):
-        return []
-    if fmt == "email" or "email" in pn:
-        return [
-            '"xss<img src=x onerror=alert(1)>"@example.com',
-            '"xss<script>alert(1)</script>"@example.com',
-        ]
-    if any(token in pn for token in ["url", "uri", "link", "homepage", "website", "redirect"]):
-        return [
-            "javascript:alert(1)",
-            "https://example.com/%3Cscript%3Ealert(1)%3C/script%3E",
-            "https://example.com/\"><script>alert(1)</script>",
-        ]
-    return XSS_PAYLOADS
-
-def make_unique_xss_payload(base_payload: str, param_name: str = "") -> str:
-    marker_source = f"{param_name}:{time.time_ns()}:{base_payload}"
-    marker_hash = hashlib.sha1(marker_source.encode("utf-8", errors="ignore")).hexdigest()[:10]
-    safe_param = re.sub(r"[^A-Za-z0-9_]", "_", str(param_name or "field"))[:24] or "field"
-    marker = f"ARGUS_{safe_param}_{marker_hash}"
-
-    replacements = [
-        ("alert(1)", f"alert('{marker}')"),
-        ("alert(1);", f"alert('{marker}');"),
-    ]
-    for old, new in replacements:
-        if old in base_payload:
-            return base_payload.replace(old, new)
-    if "javascript:" in base_payload.lower():
-        return f"javascript:alert('{marker}')"
-    return f"<img src=x onerror=alert('{marker}')>"
-
-def default_value_for_schema(schema: dict, components: dict | None = None, param_name: str = ""):
-    schema = resolve_schema_ref(schema, components)
-    if not isinstance(schema, dict):
-        return None
-    if "example" in schema:
-        return schema["example"]
-    if "default" in schema:
-        return schema["default"]
-    if schema.get("enum"):
-        return schema["enum"][0]
-
-    schema_type = get_schema_type(schema, components)
-    fmt = (schema.get("format", "") or "").lower()
-    pn = normalized_field_name(param_name)
-    if schema_type == "integer":
-        minimum = schema.get("minimum")
-        if minimum is None:
-            minimum = schema.get("min")
-        try:
-            value = int(minimum) if minimum is not None else 1
-        except Exception:
-            value = 1
-        if schema.get("exclusiveMinimum") is True:
-            value += 1
-        if any(token in pn for token in ["recruitcount", "membercount", "capacity", "personnel", "peoplecount", "guest"]):
-            value = max(value, 2)
-        return value
-    if schema_type == "number":
-        minimum = schema.get("minimum")
-        try:
-            value = float(minimum) if minimum is not None else 1.0
-        except Exception:
-            value = 1.0
-        if schema.get("exclusiveMinimum") is True:
-            value += 1.0
-        return value
-    if schema_type == "boolean":
-        return True
-    if schema_type == "array":
-        item_default = default_value_for_schema(schema.get("items", {}), components, param_name)
-        return [item_default] if item_default is not None else []
-    if schema_type == "object":
-        return build_default_payload_from_schema(schema, components)
-    if fmt == "date" or any(token in pn for token in ["enddate", "duedate", "deadline", "closedate", "checkout"]):
-        days = 30 if any(token in pn for token in ["enddate", "duedate", "deadline", "closedate", "checkout"]) else 1
-        return (date.today() + timedelta(days=days)).isoformat()
-    if fmt == "date-time":
-        return (datetime.now(timezone.utc) + timedelta(days=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
-    if schema_type == "unknown":
-        return None
-
-    if "email" in pn:
-        return "fuzz-test@example.com"
-    if "password" in pn or "pwd" in pn:
-        return "SecurePass123!"
-    if any(token in pn for token in ["phone", "tel", "mobile", "contact"]):
-        return "010-1234-5678"
-    if "nickname" in pn:
-        return "safeNickname"
-    if "representative" in pn or "holder" in pn:
-        return "HongGildong"
-    if "businessnumber" in pn or "accountnumber" in pn or "business_number" in pn or "account_number" in pn:
-        return "1234567890"
-    if any(token in pn for token in ["startdate", "checkin"]):
-        return (date.today() + timedelta(days=1)).isoformat()
-    if "category" in pn:
-        return "GENERAL"
-
-    min_len = schema.get("minLength") or schema.get("min_length") or 0
-    try:
-        min_len = int(min_len)
-    except Exception:
-        min_len = 0
-    value = "safe"
-    if min_len > len(value):
-        value = value + ("x" * (min_len - len(value)))
-
-    max_len = schema.get("maxLength") or schema.get("max_length")
-    try:
-        if max_len is not None and len(value) > int(max_len):
-            value = value[:int(max_len)]
-    except Exception:
-        pass
-    return value
-
-def default_value_for_query_param(param_name: str, schema: dict, components: dict | None = None):
-    if get_schema_type(schema, components) in {"object", "array", "unknown"}:
-        return None
-    return default_value_for_schema(schema, components, param_name)
-
-def _is_profile_endpoint(api_url: str | None) -> bool:
-    """True when the URL is the authenticated user's own single-record
-    resource (a profile / "my info" endpoint). Matched as substrings so
-    ``/members/me/profile``, ``/api/v1/me``, ``/mypage/info`` etc. are all
-    recognised, instead of keying on the literal word "profile" alone."""
-    low = str(api_url or "").lower()
-    return (
-        "profile" in low
-        or "/me/" in low
-        or low.rstrip("/").endswith("/me")
-        or "mypage" in low
-        or "myinfo" in low
-    )
 
 # Tokens that mark a profile-update field as authentication-critical.
 # Matched as substrings (after stripping separators) rather than an exact
@@ -666,294 +329,28 @@ def _is_profile_endpoint(api_url: str | None) -> bool:
 _LOGIN_CRITICAL_TOKENS = ("password", "passwd", "pwd", "email", "loginid", "username")
 
 
-def _is_login_critical_field(key: str) -> bool:
-    collapsed = re.sub(r"[^a-z0-9]", "", str(key or "").lower())
-    return any(token in collapsed for token in _LOGIN_CRITICAL_TOKENS)
 
 
-def stabilize_profile_payload(payload: dict | None, api_url: str, role: str | None, *, preserve: set[str] | None = None) -> None:
-    """Keep a profile-update baseline from locking us out of the account:
-    never send login-critical fields (password/email/...), so testing a
-    profile's stored XSS leaves the account's credentials intact.
-
-    Uniqueness of non-tested fields (a profile whose nickname/handle has a
-    UNIQUE constraint would reject a shared sample) is handled generically by
-    ``preserve_current_profile_values``, which keeps every non-tested field at
-    its *current* stored value — so no field name has to be special-cased here."""
-    if not isinstance(payload, dict):
-        return
-    if not _is_profile_endpoint(api_url):
-        return
-    preserve = preserve or set()
-    for key in list(payload.keys()):
-        if key in preserve:
-            continue
-        if _is_login_critical_field(key):
-            # Drop it — a PATCH without the field leaves the stored value
-            # (the real password / email) untouched.
-            payload.pop(key, None)
-            continue
 
 
-def preserve_current_profile_values(payload: dict | None, api_url: str, headers: dict | None, tested_param: str) -> None:
-    """Keep a profile update from clobbering fields it isn't testing.
-
-    A profile is one shared record, so testing stored XSS field-by-field
-    (name, then nickname, ...) would otherwise overwrite each earlier field's
-    payload with a benign default, leaving only the last one in the DB. Read
-    the *current* profile and copy every non-tested, non-login field's current
-    value into this request, so a payload a previous scan stored in another
-    field survives. App-neutral: unwraps a common ``{...,"data":{...}}``
-    envelope, keeps the tested field and login-critical fields untouched, and
-    silently no-ops on any error or non-profile endpoint."""
-    if not isinstance(payload, dict) or not _is_profile_endpoint(api_url):
-        return
-    try:
-        resp = requests.get(api_url, headers=headers or {}, timeout=5)
-        body = resp.json()
-    except Exception:
-        return
-    data = body.get("data") if isinstance(body, dict) and isinstance(body.get("data"), dict) else body
-    if not isinstance(data, dict):
-        return
-    tested_top = str(tested_param or "").split(".", 1)[0].replace("[0]", "")
-    for key, value in data.items():
-        if key == tested_top or key not in payload:
-            continue
-        if _is_login_critical_field(key) or isinstance(value, (dict, list)):
-            continue
-        payload[key] = value
 
 
-def build_default_payload_from_schema(schema: dict, components: dict | None = None) -> dict:
-    schema = resolve_schema_ref(schema, components)
-    payload = {}
-    if not isinstance(schema, dict):
-        return payload
-    for key, prop_schema in schema.get("properties", {}).items():
-        default_value = default_value_for_schema(prop_schema, components, key)
-        if default_value is not None:
-            payload[key] = default_value
-    return payload
 
-def build_required_payload_from_schema(schema: dict, components: dict | None = None) -> dict:
-    schema = resolve_schema_ref(schema, components)
-    payload = {}
-    if not isinstance(schema, dict):
-        return payload
-    required = set(schema.get("required") or [])
-    for key, prop_schema in (schema.get("properties") or {}).items():
-        if key not in required:
-            continue
-        default_value = default_value_for_schema(prop_schema, components, key)
-        if default_value is not None:
-            payload[key] = default_value
-    return payload
 
-def build_query_defaults_from_details(details: dict | None, components: dict | None = None) -> dict:
-    params = {}
-    for param in (details or {}).get("parameters", []) or []:
-        if not isinstance(param, dict) or str(param.get("in") or "query").lower() != "query":
-            continue
-        name = param.get("name")
-        if not name:
-            continue
-        schema = dict(param.get("schema") or {})
-        for sample_key in ("example", "default", "sample"):
-            if param.get(sample_key) not in (None, "") and sample_key not in schema:
-                schema["example" if sample_key == "sample" else sample_key] = param.get(sample_key)
-                break
-        default_value = default_value_for_query_param(name, schema, components)
-        if default_value is not None:
-            params[name] = default_value
-    return params
 
-def is_resource_identifier_key(key: str = "") -> bool:
-    normalized = normalized_field_name(key)
-    return normalized == "id" or normalized.endswith("id") or normalized in {"uuid", "key", "no", "seq"}
 
-def is_resource_identifier_value(value) -> bool:
-    if value is None or isinstance(value, bool):
-        return False
-    text = str(value).strip()
-    if not text or len(text) > 128:
-        return False
-    return bool(
-        re.fullmatch(r"\d+", text)
-        or re.fullmatch(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}", text)
-        or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,63}", text)
-    )
 
-def extract_id_from_response(resp_json, depth=0):
-    if depth > 3:
-        return None
-    if isinstance(resp_json, dict):
-        for key, value in resp_json.items():
-            if is_resource_identifier_key(key) and is_resource_identifier_value(value):
-                return value
-        for value in resp_json.values():
-            result = extract_id_from_response(value, depth + 1)
-            if result is not None:
-                return result
-    elif isinstance(resp_json, list):
-        for value in resp_json:
-            result = extract_id_from_response(value, depth + 1)
-            if result is not None:
-                return result
-    return None
 
-def extract_id_near_payload(value, payload: str, depth=0):
-    if depth > 6 or value is None:
-        return None
-    if isinstance(value, dict):
-        contains_payload = bool(payload and payload in json.dumps(value, ensure_ascii=False))
-        if contains_payload:
-            found = extract_id_from_response(value)
-            if found is not None:
-                return found
-        for child in value.values():
-            result = extract_id_near_payload(child, payload, depth + 1)
-            if result is not None:
-                return result
-    elif isinstance(value, list):
-        for child in value:
-            result = extract_id_near_payload(child, payload, depth + 1)
-            if result is not None:
-                return result
-    return None
 
-def extract_id_from_url(url: str):
-    try:
-        path_value = urllib.parse.urlparse(url).path
-    except Exception:
-        path_value = str(url or "")
-    for segment in reversed(path_value.strip("/").split("/")):
-        if re.fullmatch(r"\d+", segment or ""):
-            return segment
-    return None
 
-def extract_id_from_location(response):
-    if response is None:
-        return None
-    location = ""
-    try:
-        location = response.headers.get("Location") or response.headers.get("location") or ""
-    except Exception:
-        return None
-    if not location:
-        return None
-    return extract_id_from_url(location)
 
-def extract_session_cookie_name(set_cookie_header: str) -> str | None:
-    if not set_cookie_header:
-        return None
-    for part in set_cookie_header.split(";"):
-        part = part.strip()
-        if "=" in part:
-            name = part.split("=", 1)[0].strip()
-            if any(k in name.lower() for k in ["token", "session", "auth", "jsessionid", "sid"]):
-                return name
-    return None
 
-def check_csrf_token_absence(response):
-    body = (getattr(response, "text", "") or "").lower()
-    headers = {k.lower(): v for k, v in getattr(response, "headers", {}).items()}
-    return not (
-        "csrf" in body
-        or "xsrf" in body
-        or "x-csrf-token" in headers
-        or "x-xsrf-token" in headers
-    )
 
-def build_cookie_header_from_account(account: dict | None) -> str:
-    cookies = (account or {}).get("cookies") or {}
-    if not isinstance(cookies, dict):
-        return ""
-    return "; ".join(f"{name}={value}" for name, value in cookies.items() if name and value is not None)
 
-def build_auth_headers(token: str | None = None, account: dict | None = None, mode: str | None = None) -> dict:
-    mode = (mode or (account or {}).get("auth_mode") or "both").lower()
-    headers = {}
 
-    if mode in {"header", "bearer", "both"} and token:
-        headers["Authorization"] = f"Bearer {str(token).replace('Bearer ', '').strip()}"
-    elif mode in {"authorization_raw", "raw"} and token:
-        headers["Authorization"] = str(token).replace("Bearer ", "").strip()
-    elif mode == "x_auth_token" and token:
-        headers["X-Auth-Token"] = str(token).replace("Bearer ", "").strip()
-    elif mode == "access_token_header" and token:
-        headers["access-token"] = str(token).replace("Bearer ", "").strip()
-    elif mode == "access_token_camel_header" and token:
-        headers["accessToken"] = str(token).replace("Bearer ", "").strip()
 
-    if mode in {"cookie", "both"}:
-        cookie_header = build_cookie_header_from_account(account)
-        if cookie_header:
-            headers["Cookie"] = cookie_header
 
-    return headers
 
-def jwt_debug_summary(token: str | None) -> str:
-    if not token:
-        return "no-token"
-    try:
-        clean_token, payload = decode_jwt_claims(token)
-        safe_claims = {
-            key: payload.get(key)
-            for key in ["sub", "auth", "role", "roles", "scope", "iss", "aud", "iat", "exp"]
-            if key in payload
-        }
-        fingerprint = hashlib.sha256(clean_token.encode("utf-8")).hexdigest()[:12]
-        return f"fingerprint={fingerprint}, claims={safe_claims}"
-    except Exception as exc:
-        return f"jwt-debug-failed: {exc}"
-
-def decode_jwt_claims(token: str | None) -> tuple[str, dict]:
-    if not token:
-        return "", {}
-    clean_token = str(token).replace("Bearer ", "").strip()
-    parts = clean_token.split(".")
-    if len(parts) < 2:
-        return clean_token, {}
-    payload_segment = parts[1] + "=" * (-len(parts[1]) % 4)
-    payload = json.loads(base64.urlsafe_b64decode(payload_segment.encode("utf-8")).decode("utf-8"))
-    return clean_token, payload
-
-def summarize_response_for_log(response, max_len: int = 180) -> str:
-    if response is None:
-        return ""
-    try:
-        data = response.json()
-        if isinstance(data, dict):
-            pieces = []
-            error = data.get("error")
-            if isinstance(error, dict) and error.get("code"):
-                pieces.append(str(error.get("code")))
-            for key in ["message", "error", "detail"]:
-                value = data.get(key)
-                if isinstance(value, str) and value:
-                    pieces.append(value)
-            if pieces:
-                return " | ".join(pieces)[:max_len]
-    except Exception:
-        pass
-    return ((getattr(response, "text", "") or "").replace("\n", " ").replace("\r", " "))[:max_len]
-
-def has_unsafe_samesite_cookie(account: dict | None, response_set_cookie: str = "") -> bool:
-    attrs = (account or {}).get("cookie_attrs") or {}
-    if isinstance(attrs, dict) and attrs:
-        for meta in attrs.values():
-            samesite = ""
-            if isinstance(meta, dict):
-                samesite = str(meta.get("samesite") or "").lower()
-            if samesite not in ["lax", "strict"]:
-                return True
-        return False
-
-    lowered = (response_set_cookie or "").lower()
-    if "samesite=lax" in lowered or "samesite=strict" in lowered:
-        return False
-    return True
 
 def detect_session_cookie(target_url: str, auth_token: str, validated_endpoints: dict = None) -> str:
     """Set-Cookie 헤더에서 세션 쿠키명(예: accessToken, JSESSIONID 등)을 자동으로 추출합니다.
@@ -1023,17 +420,6 @@ def run_zap_scan(target_url: str, auth_tokens: list):
     try:
         # ── 다중 토큰 편의 변수 ───────────────────────────────────────────────
         # 권한 우선순위: admin > seller > user (ZAP 기본 인증에 사용할 대표 토큰)
-        def account_role_rank(account: dict | None) -> int:
-            role_text = str((account or {}).get("role", "")).lower()
-            claims_text = str((account or {}).get("claims", {}) or {}).lower()
-            joined = f"{role_text} {claims_text}"
-            if "admin" in joined:
-                return 0
-            if "seller" in joined:
-                return 1
-            if "user" in joined:
-                return 2
-            return 3
 
         auth_tokens = sorted(auth_tokens or [], key=account_role_rank)
         primary_token = None
@@ -1079,63 +465,10 @@ def run_zap_scan(target_url: str, auth_tokens: list):
         _token_cache = {}
         _path_param_cache = {}
 
-        def extract_id_candidates_from_json(data, param_name: str, depth: int = 0) -> list:
-            if depth > 5:
-                return []
 
-            candidates = []
-            preferred_keys = [
-                param_name,
-                param_name.replace("Id", "ID"),
-                param_name.replace("_id", "Id"),
-                "id",
-                "uuid",
-                "key",
-                "no",
-                "seq",
-            ]
-            if isinstance(data, dict):
-                for key in preferred_keys:
-                    if key in data and data[key] is not None:
-                        candidates.append(data[key])
-                for value in data.values():
-                    candidates.extend(extract_id_candidates_from_json(value, param_name, depth + 1))
-            elif isinstance(data, list):
-                for item in data[:10]:
-                    candidates.extend(extract_id_candidates_from_json(item, param_name, depth + 1))
 
-            deduped = []
-            for value in candidates:
-                value = str(value)
-                if value and value not in deduped:
-                    deduped.append(value)
-            return deduped
 
-        def resource_hint_for_param(param_name: str) -> str:
-            return re.sub(r"(_?id|Id|ID)$", "", param_name).lower()
 
-        def plural_resource_hints(hint: str) -> list:
-            if not hint:
-                return []
-            hints = [hint]
-            if hint.endswith("y"):
-                hints.append(f"{hint[:-1]}ies")
-            elif not hint.endswith("s"):
-                hints.append(f"{hint}s")
-            return list(dict.fromkeys(hints))
-
-        def resolve_path_with_known_values(path: str, known_values: dict) -> str | None:
-            resolved = path
-            for param in re.findall(r"\{([^}]+)\}", resolved):
-                if param not in known_values:
-                    return None
-                resolved = resolved.replace(f"{{{param}}}", str(known_values[param]))
-            return resolved
-
-        def path_param_matches_identifier(param_name: str, value) -> bool:
-            if value is None or isinstance(value, bool):
-                return False
-            return is_resource_identifier_value(value)
 
         def request_parts_from_openapi(details: dict | None, components: dict | None, account: dict, token: str, base_url: str):
             details = details or {}
@@ -1180,20 +513,6 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                     req_headers.pop(ct_key, None)
             return req_headers, req_params, req_json, req_data, req_files
 
-        def extract_id_from_response_or_location(response, param_name: str):
-            found = extract_id_from_url(getattr(response, "url", ""))
-            if path_param_matches_identifier(param_name, found):
-                return found
-            found = extract_id_from_location(response)
-            if path_param_matches_identifier(param_name, found):
-                return found
-            try:
-                for candidate in extract_id_candidates_from_json(response.json(), param_name):
-                    if path_param_matches_identifier(param_name, candidate):
-                        return candidate
-            except Exception:
-                pass
-            return None
 
         def discover_path_param_values_by_create(param_name: str, t_base: str, token: str, account: dict, known_values: dict, endpoints: dict, hint_variants: list) -> list:
             role = (account or {}).get("role", "account")
@@ -1504,23 +823,6 @@ def run_zap_scan(target_url: str, auth_tokens: list):
 
         _identity_param_cache = {}
 
-        def extract_identity_value(data, param_name: str):
-            wanted = normalized_field_name(param_name)
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    normalized_key = normalized_field_name(key)
-                    if value is not None and normalized_key == wanted:
-                        return value
-                for value in data.values():
-                    found = extract_identity_value(value, param_name)
-                    if found is not None:
-                        return found
-            elif isinstance(data, list):
-                for item in data[:5]:
-                    found = extract_identity_value(item, param_name)
-                    if found is not None:
-                        return found
-            return None
 
         def resolve_identity_query_param(param_name: str, account: dict, token: str | None, base_url: str):
             normalized_param = normalized_field_name(param_name)
@@ -1975,83 +1277,9 @@ def run_zap_scan(target_url: str, auth_tokens: list):
 
         configure_zap_auth_replacer(primary_account)
 
-        def format_http_request(req_obj):
-            try:
-                hdrs = "\n".join(f'  "{k}": "{v}"' for k, v in req_obj.headers.items())
-                body = req_obj.body
-                if isinstance(body, bytes):
-                    body = body.decode("utf-8", errors="ignore")
-                body_str = body if body else ""
-                return f"{req_obj.method} {req_obj.url}\n\nHeaders:\n{{\n{hdrs}\n}}\n\nBody:\n{body_str}"
-            except Exception as e:
-                return f"Request formatting error: {e}"
 
-        def find_containing_record(body: str, needle: str):
-            """If body is JSON and needle lives inside one specific object in
-            a list (e.g. one post out of a feed array), return that object
-            alone, pretty-printed — a whole valid record instead of an
-            arbitrary character slice that could cut a JSON object in half."""
-            try:
-                data = json.loads(body)
-            except (ValueError, TypeError):
-                return None
 
-            def _search(node):
-                if isinstance(node, dict):
-                    try:
-                        serialized = json.dumps(node, ensure_ascii=False)
-                    except (TypeError, ValueError):
-                        return None
-                    if needle not in serialized:
-                        return None
-                    for value in node.values():
-                        deeper = _search(value)
-                        if deeper is not None:
-                            return deeper
-                    return node
-                if isinstance(node, list):
-                    for item in node:
-                        found = _search(item)
-                        if found is not None:
-                            return found
-                return None
 
-            record = _search(data)
-            if record is None:
-                return None
-            try:
-                pretty = json.dumps(record, ensure_ascii=False, indent=2)
-            except (TypeError, ValueError):
-                return None
-            return f"(취약점이 발견된 항목만 표시, 전체 응답에서 발췌)\n{pretty}"
-
-        def windowed_body(body: str, needle: str = "", context: int = 800, max_len: int = 3000) -> str:
-            """Keep the evidence readable without losing the payload: save
-            just the JSON record containing it (falling back to a character
-            window) instead of the first N characters, so a payload stored
-            deep in a list response isn't truncated away."""
-            if not body or len(body) <= max_len:
-                return body
-            if needle:
-                record = find_containing_record(body, needle)
-                if record is not None:
-                    return record
-                idx = body.find(needle)
-                if idx != -1:
-                    start = max(0, idx - context)
-                    end = min(len(body), idx + len(needle) + context)
-                    prefix = "... (앞부분 생략) ...\n" if start > 0 else ""
-                    suffix = "\n... (뒷부분 생략, 취약점 증거 주변만 저장됨) ..." if end < len(body) else ""
-                    return f"{prefix}{body[start:end]}{suffix}"
-            return body[:max_len] + "\n... (뒷부분 생략, 응답이 너무 길어 앞부분만 저장됨) ..."
-
-        def format_http_response(res_obj, needle: str = ""):
-            try:
-                hdrs = "\n".join(f'  "{k}": "{v}"' for k, v in res_obj.headers.items())
-                body_str = windowed_body(res_obj.text if res_obj.text else "", needle)
-                return f"HTTP/1.1 {res_obj.status_code} {res_obj.reason}\n\nHeaders:\n{{\n{hdrs}\n}}\n\nBody:\n{body_str}"
-            except Exception as e:
-                return f"Response formatting error: {e}"
 
         def is_dangerous_endpoint(method: str, path: str, details: dict | None = None) -> tuple[bool, str]:
             method_upper = (method or "").upper()
@@ -2106,109 +1334,13 @@ def run_zap_scan(target_url: str, auth_tokens: list):
 
             return False, ""
 
-        def extract_request_parts(req_obj, body_json=None, query_params=None):
-            """Playwright / Selenium 자동화 재현을 위해 요청 구성 요소를 파싱된 딕셔너리로 반환합니다."""
-            try:
-                # 헤더 딕셔너리 (Playwright 재현 시 headers 옵션에 그대로 전달)
-                parsed_headers = dict(req_obj.headers)
-
-                # 바디: 이미 python dict 형태로 전달된 경우 그대로 사용, 아니면 raw body 파싱 시도
-                parsed_body = None
-                if body_json is not None:
-                    parsed_body = body_json
-                else:
-                    raw_body = req_obj.body
-                    if isinstance(raw_body, bytes):
-                        raw_body = raw_body.decode("utf-8", errors="ignore")
-                    if raw_body:
-                        try:
-                            parsed_body = json.loads(raw_body)
-                        except Exception:
-                            parsed_body = raw_body  # JSON 파싱 실패 시 raw 문자열 유지
-
-                parsed_query = query_params or {}
-
-                content_type = parsed_headers.get("Content-Type", parsed_headers.get("content-type", ""))
-                auth_header = parsed_headers.get("Authorization", parsed_headers.get("authorization", ""))
-                cookie_header = parsed_headers.get("Cookie", parsed_headers.get("cookie", ""))
-
-                # Playwright fetch() 재현용 스크립트 스텁 생성
-                body_snippet = json.dumps(parsed_body, ensure_ascii=False) if isinstance(parsed_body, dict) else repr(parsed_body)
-                query_snippet = ("?" + "&".join(f"{k}={v}" for k, v in parsed_query.items())) if parsed_query else ""
-                replay_script = (
-                    f"// [Playwright] 재현 테스트 스크립트\n"
-                    f"const response = await request.fetch('{req_obj.url}{query_snippet}', {{\n"
-                    f"  method: '{req_obj.method}',\n"
-                    f"  headers: {{\n"
-                    f"    'Content-Type': '{content_type}',\n"
-                    f"    'Authorization': '{auth_header}',\n"
-                    f"    'Cookie': '{cookie_header}'\n"
-                    f"  }},\n"
-                    f"  data: {body_snippet}\n"
-                    f"}});\n"
-                    f"// 검증: 응답 본문 내 공격 페이로드 반사 확인\n"
-                    f"const body = await response.text();\n"
-                    f"expect(body).toContain('/* 공격 페이로드 삽입 */');"
-                )
-
-                return {
-                    "parsed_request_headers": parsed_headers,
-                    "parsed_request_body": parsed_body,
-                    "parsed_request_query": parsed_query,
-                    "auth_token_used": auth_header,
-                    "login_required": bool(auth_header),
-                    "replay_script": replay_script,
-                }
-            except Exception as e:
-                return {
-                    "parsed_request_headers": {},
-                    "parsed_request_body": None,
-                    "parsed_request_query": {},
-                    "auth_token_used": "",
-                    "login_required": False,
-                    "replay_script": f"// extract_request_parts error: {e}",
-                }
 
         custom_alerts = []
         cross_role_stored_seen = set()
 
         scan_accounts = auth_tokens if auth_tokens else [{"role": "anonymous", "token": None, "base_url": target_url}]
-        def is_admin_account(account: dict) -> bool:
-            role_text = str(account.get("role", "")).lower()
-            base_url_text = str(account.get("base_url", "")).lower()
-            claims_text = str(account.get("claims", {}) or {}).lower()
-            return bool(account.get("token")) and (
-                "admin" in role_text
-                or "admin" in claims_text
-                or "admin" in base_url_text
-            )
 
-        def account_role_text(account: dict | None) -> str:
-            account = account or {}
-            return " ".join(
-                str(value or "").lower()
-                for value in [
-                    account.get("role"),
-                    account.get("base_url"),
-                    account.get("claims", {}),
-                    account.get("email"),
-                ]
-            )
 
-        def endpoint_role_priority(path_value: str, account: dict | None) -> tuple[int, str]:
-            lowered = str(path_value or "").lower()
-            role_text = account_role_text(account)
-            is_admin = "admin" in role_text
-            is_seller = "seller" in role_text
-            if is_admin and re.search(r"(^|/)admin(s)?(/|$)", lowered):
-                return (0, lowered)
-            if is_seller and re.search(r"(^|/)seller(s)?(/|$)", lowered):
-                return (0, lowered)
-            if not is_admin and re.search(r"(^|/)admin(s)?(/|$)", lowered):
-                return (3, lowered)
-            if not is_seller and re.search(r"(^|/)seller(s)?(/|$)", lowered):
-                return (3, lowered)
-            return (1, lowered)
 
         admin_accounts = [account for account in auth_tokens if is_admin_account(account)]
         if admin_accounts:
@@ -2222,26 +1354,6 @@ def run_zap_scan(target_url: str, auth_tokens: list):
         else:
             print("[CROSS-ROLE STORED XSS] no admin reader account detected")
 
-        def resource_tokens_from_path(path_value: str) -> set[str]:
-            ignored = {
-                "api", "v1", "v2", "admin", "admins", "seller", "sellers",
-                "me", "auth", "login", "logout", "search", "check",
-            }
-            tokens = set()
-            for segment in (path_value or "").split("/"):
-                segment = segment.strip("{} ").lower()
-                if not segment or segment in ignored or segment.startswith("{"):
-                    continue
-                if re.fullmatch(r"\d+", segment):
-                    continue
-                tokens.add(segment)
-                if segment.endswith("ies") and len(segment) > 3:
-                    tokens.add(segment[:-3] + "y")
-                elif segment.endswith("s") and len(segment) > 1:
-                    tokens.add(segment[:-1])
-            if "profile" in tokens:
-                tokens.update({"user", "users", "member", "members", "account", "accounts"})
-            return tokens
 
         def cross_account_read_candidates_for_post(post_path: str, resource_id, writer_account: dict | None = None) -> list[tuple[dict, str, str, dict]]:
             post_tokens = resource_tokens_from_path(post_path)
@@ -2298,18 +1410,6 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                     deduped.append((reader_account, get_path, reader_url, reader_params))
             return deduped[:20]
 
-        def reflected_near_resource_id(response_text: str, payload: str, resource_id) -> bool:
-            if not is_payload_reflected(payload, response_text):
-                return False
-            if not resource_id:
-                return True
-            rid = str(resource_id)
-            if rid not in response_text:
-                return False
-            idx = response_text.find(rid)
-            start_clip = max(0, idx - 250)
-            end_clip = min(len(response_text), idx + 750)
-            return payload in response_text[start_clip:end_clip]
 
         def discover_resource_id_from_readers(post_path: str, payload: str, writer_account: dict | None, get_endpoint_items: list[tuple[str, dict]]) -> tuple[object | None, str]:
             post_tokens = resource_tokens_from_path(post_path)
