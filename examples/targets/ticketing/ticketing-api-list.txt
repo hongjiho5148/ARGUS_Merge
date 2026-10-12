@@ -1,0 +1,63 @@
+# ticketing API List (extracted from source by extract_api_from_source.py)
+# Format: METHOD /path | queryParam, queryParam
+# Path params like {id} stay in the path.
+
+GET /api/admin/coupons
+POST /api/admin/coupons
+GET /api/admin/orders | status, page, size
+GET /api/admin/orders/summary
+POST /api/admin/tickets/scan
+POST /api/auth/admin/login
+POST /api/auth/login
+GET /api/auth/me
+PATCH /api/auth/me
+GET /api/auth/notification-prefs
+PUT /api/auth/notification-prefs
+PATCH /api/auth/password
+POST /api/auth/resend-verification
+POST /api/auth/signup
+GET /api/auth/verify-email | token
+GET /api/events | status, category, startDate, endDate, keyword, sortDir, page, size
+POST /api/events/admin
+POST /api/events/admin/import/kopis
+PUT /api/events/admin/seats/{seatId}
+GET /api/events/admin/stats
+PUT /api/events/admin/{eventId}
+POST /api/events/admin/{eventId}/seats
+GET /api/events/{eventId}
+DELETE /api/events/{eventId}/open-alert
+GET /api/events/{eventId}/open-alert
+POST /api/events/{eventId}/open-alert
+GET /api/events/{eventId}/reviews | page, size
+POST /api/events/{eventId}/reviews
+GET /api/events/{eventId}/seats | grade
+DELETE /api/events/{eventId}/waitlist
+GET /api/events/{eventId}/waitlist
+POST /api/events/{eventId}/waitlist
+GET /api/orders | page, size
+POST /api/orders
+GET /api/orders/coupons
+GET /api/orders/coupons/available
+GET /api/orders/points
+GET /api/orders/tickets
+GET /api/orders/transfers
+POST /api/orders/transfers/{transferId}/accept
+POST /api/orders/transfers/{transferId}/cancel
+POST /api/orders/transfers/{transferId}/decline
+DELETE /api/orders/{orderId} | expectedRefund
+POST /api/orders/{orderId}/apply-coupon
+POST /api/orders/{orderId}/apply-points
+GET /api/orders/{orderId}/checkout
+DELETE /api/orders/{orderId}/coupon
+POST /api/orders/{orderId}/payment
+GET /api/orders/{orderId}/refund-preview
+GET /api/orders/{orderId}/ticket
+POST /api/orders/{orderId}/transfer
+POST /api/orders/{orderId}/verify-identity
+POST /api/queue/enter
+GET /api/queue/status | queueToken
+POST /api/reservations
+DELETE /api/reservations/{reservationId}
+GET /api/wishlist
+POST /api/wishlist
+DELETE /api/wishlist/{eventId}

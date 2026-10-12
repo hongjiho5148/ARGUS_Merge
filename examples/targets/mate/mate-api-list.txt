@@ -1,0 +1,55 @@
+# mate API List (extracted from source by extract_api_from_source.py)
+# Format: METHOD /path | queryParam, queryParam
+# Path params like {id} stay in the path.
+
+GET /admin/dashboard | userPage, projectPage, logPage
+GET /admin/login
+GET /admin/logs | logPage, keyword
+GET /admin/projects | projectPage
+POST /admin/projects/delete/{id} | projectPage, redirectPage
+POST /admin/projects/restore/{id} | projectPage, keyword, redirectPage
+GET /admin/projects/{id}
+GET /admin/search | keyword, userPage, projectPage, logPage, redirectPage
+GET /admin/users | userPage
+POST /admin/users/delete/{id} | userPage, redirectPage
+POST /admin/users/restore/{id} | userPage, redirectPage
+GET /admin/users/{id}
+GET /api/applications/projects/{projectId}
+DELETE /api/applications/{applicationId}
+PATCH /api/applications/{applicationId}/status
+POST /api/applications/{projectId}
+GET /api/auth/check-email | email
+GET /api/auth/check-nickname | nickname, userId
+GET /api/auth/check-phone | phoneNumber, userId
+POST /api/auth/find-email
+POST /api/auth/login
+POST /api/auth/logout
+POST /api/auth/refresh
+POST /api/auth/reset-password
+POST /api/auth/signup
+DELETE /api/posts/comments/{commentId}
+PUT /api/posts/comments/{commentId}
+DELETE /api/posts/members/{memberId}
+GET /api/posts/{projectId}/board | page, size
+POST /api/posts/{projectId}/board
+DELETE /api/posts/{projectId}/board/{postId}
+GET /api/posts/{projectId}/board/{postId}
+PATCH /api/posts/{projectId}/board/{postId}
+GET /api/posts/{projectId}/board/{postId}/comments
+POST /api/posts/{projectId}/board/{postId}/comments
+GET /api/posts/{projectId}/members
+GET /api/projects | category, keyword, page, size
+POST /api/projects
+DELETE /api/projects/{projectId}
+GET /api/projects/{projectId}
+PATCH /api/projects/{projectId}
+PATCH /api/projects/{projectId}/close
+PATCH /api/projects/{projectId}/reopen
+DELETE /api/users/me
+GET /api/users/me
+PATCH /api/users/me
+GET /api/users/me/applications
+GET /api/users/me/posts/joined
+GET /api/users/me/posts/owned
+DELETE /api/users/profile-image
+PATCH /api/users/profile-image

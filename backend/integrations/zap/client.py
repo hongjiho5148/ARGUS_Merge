@@ -519,8 +519,9 @@ def replay_inventory_probes(
     max_probes: int = 0,
     on_progress: Any | None = None,
 ) -> list[dict[str, Any]]:
-    """Send GET/POST/PUT/PATCH/DELETE for every endpoint × each auth pass via ZAP."""
+    """Send a live probe for every safe endpoint × each auth pass via ZAP (unsafe ones are skipped)."""
     from app.services.auth_probe_service import auth_passes
+    from diagnosis.safety import is_dangerous_endpoint
     from inventory.probe_build import build_probe_request, format_raw_http_request
 
     endpoints = tree.endpoints
@@ -532,6 +533,25 @@ def replay_inventory_probes(
 
     for account_auth, auth_mode in passes:
         for ep in endpoints[:limit]:
+            blocked, reason = is_dangerous_endpoint(ep.method, ep.path)
+            if blocked:
+                results.append(
+                    {
+                        "endpoint_id": ep.endpoint_id,
+                        "method": ep.method.upper(),
+                        "path": ep.path,
+                        "base_url": ep.base_url,
+                        "url": f"{ep.base_url}{ep.path}",
+                        "http_status": None,
+                        "skipped_unsafe": True,
+                        "skip_reason": reason,
+                        "auth_mode": auth_mode,
+                        "account_email": account_auth.get("email") if account_auth else None,
+                        "login_url": account_auth.get("login_url") if account_auth else None,
+                    }
+                )
+                done += 1
+                continue
             probe = build_probe_request(
                 ep,
                 probe_base_fn=probe_url,

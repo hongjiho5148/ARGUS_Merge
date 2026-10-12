@@ -45,3 +45,32 @@ def json_field_matches(data: Any, key: str, expected: str) -> bool:
                 return True
     return False
 
+
+
+_LOGIN_FORM_MARKERS = ('type="password"', "type='password'", "type=password")
+_SPA_SHELL_MARKERS = ('id="root"', "id='root'", 'id="app"', "id='app'", 'id="__next"')
+
+
+def judge_vertical_access(
+    status_code: int,
+    body: str,
+    content_type: str = "",
+    denial_keywords: list[str] | None = None,
+) -> tuple[bool, str]:
+    """Did a non-admin session really reach an admin-only resource?
+
+    Returns (vulnerable, reason). Redirects must be disabled by the caller so a
+    3xx (typically "go to the login page") is read as access denied instead of
+    being followed into a 200 login page.
+    """
+    if status_code not in {200, 201, 204}:
+        return False, f"status {status_code} (denied or redirected)"
+    lowered = (body or "").lower()
+    if any(str(k).lower() in lowered for k in (denial_keywords or [])):
+        return False, "response carries a denial message"
+    if "html" in (content_type or "").lower():
+        if any(marker in lowered for marker in _LOGIN_FORM_MARKERS):
+            return False, "response is a login form"
+        if any(marker in lowered for marker in _SPA_SHELL_MARKERS):
+            return False, "response is a front-end page shell, not endpoint data"
+    return True, "admin-only endpoint answered a non-admin session"

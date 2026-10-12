@@ -95,3 +95,40 @@ class TestConfigExtension:
 
     def test_extend_unique_ignores_non_list(self, scanner):
         assert scanner._extend_unique(["a"], "not-a-list") == ["a"]
+
+
+class TestVerticalAccessJudgement:
+    DENIAL = ["forbidden", "권한"]
+
+    def test_redirect_is_denied(self, utils):
+        vulnerable, _ = utils.judge_vertical_access(302, "", "text/html", self.DENIAL)
+        assert vulnerable is False
+
+    @pytest.mark.parametrize("status", [401, 403, 404, 500])
+    def test_error_statuses_are_denied(self, utils, status):
+        assert utils.judge_vertical_access(status, "x", "application/json", self.DENIAL)[0] is False
+
+    def test_denial_message_in_a_200_is_denied(self, utils):
+        body = '{"success": false, "message": "권한이 없습니다"}'
+        assert utils.judge_vertical_access(200, body, "application/json", self.DENIAL)[0] is False
+
+    def test_login_form_page_is_not_admin_access(self, utils):
+        body = '<html><form><input type="password" name="pw"></form></html>'
+        vulnerable, reason = utils.judge_vertical_access(200, body, "text/html;charset=UTF-8", self.DENIAL)
+        assert vulnerable is False and "login" in reason
+
+    def test_spa_shell_is_not_endpoint_data(self, utils):
+        body = '<!doctype html><div id="root"></div>'
+        assert utils.judge_vertical_access(200, body, "text/html", self.DENIAL)[0] is False
+
+    def test_json_admin_data_is_flagged(self, utils):
+        body = '{"success": true, "data": {"members": [{"id": 1}]}}'
+        vulnerable, _ = utils.judge_vertical_access(200, body, "application/json", self.DENIAL)
+        assert vulnerable is True
+
+    def test_html_admin_page_without_login_form_is_flagged(self, utils):
+        body = "<html><h1>User management</h1><table></table></html>"
+        assert utils.judge_vertical_access(200, body, "text/html", self.DENIAL)[0] is True
+
+    def test_204_counts_as_access(self, utils):
+        assert utils.judge_vertical_access(204, "", "", self.DENIAL)[0] is True

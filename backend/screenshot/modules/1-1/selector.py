@@ -43,7 +43,12 @@ def is_capturable(finding: dict[str, Any]) -> bool:
     evidence = finding_evidence(finding)
     if str(evidence.get("vuln_type") or "").strip() not in _SUPPORTED_VULN_TYPES:
         return False
-    return str(evidence.get("validation_status") or "").strip() == "True Positive"
+    status = str(evidence.get("validation_status") or "").strip()
+    if status == "True Positive":
+        return True
+    # A Stored XSS candidate is only API-level evidence; the browser capture is
+    # what decides whether it is promoted or stays a candidate.
+    return status == "Potential" and str(evidence.get("vuln_type") or "").strip() == "Stored XSS"
 
 
 def _rank(finding: dict[str, Any]) -> tuple[int, int, int, int, int]:

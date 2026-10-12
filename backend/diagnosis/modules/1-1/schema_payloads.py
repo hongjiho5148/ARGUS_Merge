@@ -224,6 +224,27 @@ def make_unique_xss_payload(base_payload: str, param_name: str = "") -> str:
     return f"<img src=x onerror=alert('{marker}')>"
 
 
+# Name-based hints are limited to universal concepts (e-mail, password, phone,
+# calendar dates). Anything site-specific is left to the schema (example, enum,
+# minimum/maximum, length) or to baseline repair, which reads the server's own
+# validation message.
+_DATE_FALSE_FRIENDS = ("update", "candidate", "validat", "mandate", "consolidat")
+
+
+def _is_date_field_name(pn: str) -> bool:
+    for word in _DATE_FALSE_FRIENDS:
+        pn = pn.replace(word, "")
+    return any(token in pn for token in ("date", "deadline", "expire", "expiry", "until", "due"))
+
+
+def _is_phone_field_name(pn: str) -> bool:
+    return "phone" in pn or "mobile" in pn or pn in {"tel", "telno", "telnumber", "tel1"}
+
+
+def _is_closing_date_name(pn: str) -> bool:
+    return any(token in pn for token in ("end", "due", "deadline", "expire", "expiry", "until", "close"))
+
+
 def default_value_for_schema(schema: dict, components: dict | None = None, param_name: str = ""):
     schema = resolve_schema_ref(schema, components)
     if not isinstance(schema, dict):
@@ -248,8 +269,6 @@ def default_value_for_schema(schema: dict, components: dict | None = None, param
             value = 1
         if schema.get("exclusiveMinimum") is True:
             value += 1
-        if any(token in pn for token in ["recruitcount", "membercount", "capacity", "personnel", "peoplecount", "guest"]):
-            value = max(value, 2)
         return value
     if schema_type == "number":
         minimum = schema.get("minimum")
@@ -267,8 +286,8 @@ def default_value_for_schema(schema: dict, components: dict | None = None, param
         return [item_default] if item_default is not None else []
     if schema_type == "object":
         return build_default_payload_from_schema(schema, components)
-    if fmt == "date" or any(token in pn for token in ["enddate", "duedate", "deadline", "closedate", "checkout"]):
-        days = 30 if any(token in pn for token in ["enddate", "duedate", "deadline", "closedate", "checkout"]) else 1
+    if fmt == "date" or _is_date_field_name(pn):
+        days = 30 if _is_closing_date_name(pn) else 1
         return (date.today() + timedelta(days=days)).isoformat()
     if fmt == "date-time":
         return (datetime.now(timezone.utc) + timedelta(days=1)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
@@ -279,25 +298,17 @@ def default_value_for_schema(schema: dict, components: dict | None = None, param
         return "fuzz-test@example.com"
     if "password" in pn or "pwd" in pn:
         return "SecurePass123!"
-    if any(token in pn for token in ["phone", "tel", "mobile", "contact"]):
-        return "010-1234-5678"
-    if "nickname" in pn:
-        return "safeNickname"
-    if "representative" in pn or "holder" in pn:
-        return "HongGildong"
-    if "businessnumber" in pn or "accountnumber" in pn or "business_number" in pn or "account_number" in pn:
-        return "1234567890"
-    if any(token in pn for token in ["startdate", "checkin"]):
+    if _is_phone_field_name(pn):
+        return "01012345678"
+    if any(token in pn for token in ["startdate", "begindate"]):
         return (date.today() + timedelta(days=1)).isoformat()
-    if "category" in pn:
-        return "GENERAL"
 
     min_len = schema.get("minLength") or schema.get("min_length") or 0
     try:
         min_len = int(min_len)
     except Exception:
         min_len = 0
-    value = "safe"
+    value = "safetest"
     if min_len > len(value):
         value = value + ("x" * (min_len - len(value)))
 
@@ -385,7 +396,12 @@ def preserve_current_profile_values(payload: dict | None, api_url: str, headers:
     for key, value in data.items():
         if key == tested_top or key not in payload:
             continue
-        if _is_login_critical_field(key) or isinstance(value, (dict, list)):
+        if _is_login_critical_field(key) or isinstance(value, dict):
+            continue
+        # A list of plain values (tech stacks, tags) is copied too: servers often
+        # whitelist its entries, so the account's own current list is the one
+        # value known to be accepted.
+        if isinstance(value, list) and not all(isinstance(item, (str, int, float, bool)) for item in value):
             continue
         payload[key] = value
 

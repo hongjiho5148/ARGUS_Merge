@@ -51,7 +51,33 @@ def _load_raw_config(config_path: Path) -> dict[str, Any]:
 
 
 
+def _origin_key(url: str) -> str:
+    """scheme://host:port with the local aliases collapsed, so a saved
+    ``localhost:5173`` matches the runtime ``host.docker.internal:5173``."""
+    parsed = urlparse(str(url or "").strip())
+    host = (parsed.hostname or "").lower()
+    if host in {"127.0.0.1", "host.docker.internal"}:
+        host = "localhost"
+    port = f":{parsed.port}" if parsed.port else ""
+    return f"{parsed.scheme or 'http'}://{host}{port}"
+
+
+def _saved_kinds() -> dict[str, str]:
+    from app.services.base_urls_service import load_base_urls
+
+    try:
+        return {_origin_key(e["url"]): (e.get("kind") or "api") for e in load_base_urls()["urls"]}
+    except Exception:
+        return {}
+
+
 def _frontend_base(bases: list[str]) -> str | None:
+    kinds = _saved_kinds()
+    registered = [b for b in bases if kinds.get(_origin_key(b)) in {"frontend", "api-and-frontend"}]
+    if registered:
+        return registered[0].rstrip("/")
+    # Nothing marked as a frontend in the Base URLs panel (older setups): fall
+    # back to the common dev-server port.
     for base in bases:
         if ":5173" in base or base.endswith(":5173"):
             return base.rstrip("/")
@@ -59,6 +85,9 @@ def _frontend_base(bases: list[str]) -> str | None:
 
 
 def _api_bases(bases: list[str]) -> list[str]:
+    kinds = _saved_kinds()
+    if any(kinds.get(_origin_key(b)) in {"frontend", "api-and-frontend"} for b in bases):
+        return [b.rstrip("/") for b in bases if kinds.get(_origin_key(b)) in {"api", "api-and-frontend", None}]
     out: list[str] = []
     for base in bases:
         if ":8080" in base or ":8081" in base:
@@ -70,6 +99,24 @@ def _rows_from_probe_results(probe_results: list[dict[str, Any]]) -> list[dict[s
     rows: list[dict[str, Any]] = []
     for pr in probe_results:
         http_status = pr.get("http_status")
+        if pr.get("skipped_unsafe"):
+            rows.append(
+                {
+                    "endpoint_id": pr["endpoint_id"],
+                    "method": pr["method"],
+                    "path": pr["path"],
+                    "base_url": pr["base_url"],
+                    "url": pr["url"],
+                    "http_status": None,
+                    "status": "skipped_unsafe",
+                    "params_ok": True,
+                    "include_in_final": True,
+                    "discovered": False,
+                    "note": f"Not probed (safety): {pr.get('skip_reason', '')}",
+                    "source": "zap_discover",
+                }
+            )
+            continue
         status, include, params_ok = _classify(http_status, None)
         rows.append(
             {
@@ -108,9 +155,8 @@ def _urls_to_new_endpoints(urls: set[str], existing_ids: set[str], bases: list[s
         eid = f"{base}:{method}:{path}"
         if eid in existing_ids:
             continue
-        if "/api/" not in path and path not in {"/", "/flight", "/car", "/map", "/feed", "/mypage"}:
-            if not path.startswith("/"):
-                continue
+        if not path.startswith("/"):
+            continue
         new_eps.append(
             Endpoint(
                 method=method,
@@ -118,7 +164,8 @@ def _urls_to_new_endpoints(urls: set[str], existing_ids: set[str], bases: list[s
                 base_url=base,
                 request_params=[],
                 sources=["zap_discover"],
-                kind="frontend" if ":5173" in base else "api",
+                # callers pass API origins only (frontend dev-proxy traffic is excluded)
+                kind="api",
             )
         )
         existing_ids.add(eid)

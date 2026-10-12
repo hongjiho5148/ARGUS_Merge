@@ -1,0 +1,16 @@
+# mate URL List (frontend routes extracted from React Router by extract_api_from_source.py)
+# One path per line. Dynamic segments are written as {param}.
+
+/
+/posts/{id}
+/find-email
+/find-password
+/login
+/register
+/posts/new
+/posts/{id}/edit
+/posts/{id}/board
+/posts/{id}/apply
+/mypage
+/mypage/posts
+/mypage/applies

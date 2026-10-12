@@ -18,9 +18,9 @@ def get_headers(token: str, cookie_name: str | None = None, delivery: str | None
         return {"Cookie": f"{cookie_name}={token_str}"}
     if "=" in token_str and ";" not in token_str:
         return {"Cookie": token_str}
-    if len(token_str) > 30:
-        return {"Authorization": f"Bearer {token_str}"}
-    return {"Cookie": f"accessToken={token_str}"}
+    # Neither a cookie name nor a delivery hint is known: a bearer header is the
+    # common convention; guessing a cookie name would be tied to one site.
+    return {"Authorization": f"Bearer {token_str}"}
 
 
 def auth_headers_for_session(session: dict[str, Any] | None) -> dict[str, str]:

@@ -97,10 +97,15 @@ def capture_finding(
     output_root: Path,
     *,
     perform_replay: bool = True,
+    info: dict[str, Any] | None = None,
 ) -> list[dict[str, str]]:
+    """``info``, when given, is filled with facts the capture learned about the
+    finding (currently the browser verification of a Stored XSS)."""
     case = case_from_finding(finding)
     output_dir = output_root / case.finding_id
     artifacts = capture_case(case, output_dir, perform_replay=perform_replay)
+    if info is not None and case.metadata.get("browser_verification"):
+        info["browser_verification"] = case.metadata["browser_verification"]
 
     manifest = {
         "section_id": case.section_id,
@@ -212,8 +217,23 @@ def capture_latest(
     for finding, parent_id, occurrence_index in capture_jobs:
         finding_id = stable_finding_id(finding)
         try:
-            artifacts = capture_finding(finding, output_root, perform_replay=perform_replay)
-            row = {"finding_id": finding_id, "ok": True, "artifacts": artifacts}
+            info: dict[str, Any] = {}
+            artifacts = capture_finding(finding, output_root, perform_replay=perform_replay, info=info)
+            evidence = finding_evidence(finding)
+            row = {
+                "finding_id": finding_id,
+                "ok": True,
+                "artifacts": artifacts,
+                # lets the diagnosis service find this finding again without
+                # importing the selector's id scheme
+                "match": {
+                    "vuln_type": str(evidence.get("vuln_type") or ""),
+                    "url": str(evidence.get("url") or "").rstrip("/"),
+                    "param": str(evidence.get("param") or ""),
+                    "account_role": str(evidence.get("account_role") or ""),
+                },
+                **info,
+            }
             if parent_id:
                 evidence = finding_evidence(finding)
                 row.update(

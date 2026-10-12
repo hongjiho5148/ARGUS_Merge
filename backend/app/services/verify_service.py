@@ -35,6 +35,8 @@ from inventory.traffic_params import (
     observation_to_response_params,
 )
 
+from diagnosis.safety import is_dangerous_endpoint
+
 logger = logging.getLogger("uvicorn.error")
 logger.setLevel(logging.INFO)
 
@@ -90,6 +92,33 @@ def _note(http_status: int | None, error: str | None, status: str) -> str:
     return notes.get(status, "")
 
 
+def _skipped_unsafe_row(
+    ep: Endpoint,
+    reason: str,
+    *,
+    account_auth: dict[str, Any] | None,
+    auth_mode: str,
+) -> dict[str, Any]:
+    return {
+        "endpoint_id": ep.endpoint_id,
+        "method": ep.method.upper(),
+        "path": ep.path,
+        "base_url": ep.base_url,
+        "url": f"{ep.base_url}{ep.path}",
+        "http_status": None,
+        "status": "skipped_unsafe",
+        "params_ok": True,
+        "include_in_final": True,
+        "discovered": False,
+        "auth_mode": auth_mode,
+        "account_email": account_auth.get("email") if account_auth else None,
+        "login_url": account_auth.get("login_url") if account_auth else None,
+        "login_label": account_auth.get("login_label") if account_auth else None,
+        "params_enriched": 0,
+        "note": f"Not probed (safety): {reason}",
+    }
+
+
 async def _probe(
     client: httpx.AsyncClient,
     ep: Endpoint,
@@ -97,6 +126,9 @@ async def _probe(
     account_auth: dict[str, Any] | None = None,
     auth_mode: str = "anonymous",
 ) -> dict[str, Any]:
+    blocked, reason = is_dangerous_endpoint(ep.method, ep.path)
+    if blocked:
+        return _skipped_unsafe_row(ep, reason, account_auth=account_auth, auth_mode=auth_mode)
     probe = _build_request(ep, account_auth=account_auth)
     method = probe["method"]
     url = probe["url"]

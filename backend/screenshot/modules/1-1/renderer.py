@@ -102,7 +102,9 @@ def _csrf_verdict_html(case: EvidenceCase) -> str:
         (
             d.get("origin_referer_bypass"),
             "Origin/Referer 검증",
-            f"위조·제거된 Origin/Referer 요청을 수락 (변조 {tampered}, 제거 {no_ref})",
+            f"위조 Origin/Referer 요청을 수락 (위조 {tampered}, 기준선 {no_ref})"
+            if tampered is not None
+            else "미검증 (상태 파괴 엔드포인트라 요청을 보내지 않음)",
         ),
         (
             d.get("csrf_token_absent"),
@@ -126,7 +128,11 @@ def _csrf_verdict_html(case: EvidenceCase) -> str:
             f'<span class="nm">{_esc(name)}</span>'
             f'<span class="dt">{_esc(detail)}</span></li>'
         )
-    if isinstance(failed, int) and failed >= 2:
+    verdict_labels = {"confirmed": "확정", "candidate": "후보(수동 확인 필요)"}
+    verdict = d.get("verdict")
+    if verdict in verdict_labels and d.get("reason"):
+        conclusion = f"판정: {verdict_labels[verdict]} — {d.get('reason')}"
+    elif isinstance(failed, int) and failed >= 2:
         conclusion = f"{failed}/3 방어 실패 → 공격자 페이지가 피해자 세션으로 이 요청을 몰래 성공시킬 수 있음"
     else:
         conclusion = f"{failed}/3 방어 실패"

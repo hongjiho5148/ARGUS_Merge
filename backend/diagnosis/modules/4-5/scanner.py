@@ -12,6 +12,7 @@ from urllib.parse import urlsplit
 from app.services.auth_probe_service import login_all_accounts
 from diagnosis.context import DiagnosisContext
 from diagnosis.result import DiagnosisFinding
+from diagnosis.safety import is_dangerous_endpoint
 from app.services import diagnosis_progress as dp
 
 import sys
@@ -20,7 +21,7 @@ if str(_MODULE_DIR) not in sys.path:
     sys.path.insert(0, str(_MODULE_DIR))
 
 from g45_models import ScanResult
-from g45_utils import _read_api_tree, json_field_matches
+from g45_utils import _read_api_tree, json_field_matches, judge_vertical_access
 from g45_auth import auth_headers_for_session, get_dynamic_user_id
 from g45_payloads import safe_body
 from g45_discovery import build_resource_inventory, active_discovery_inventory
@@ -109,6 +110,7 @@ def run_g45_scan(ctx: DiagnosisContext, module_dir: Path) -> ScanResult:
     max_endpoints = _positive_int(options.get("max_endpoints"))
     timeout = _float_in_range(options.get("timeout"), 5.0)
     admin_path_markers = _extend_unique([], options.get("admin_path_markers"))
+    unsafe_path_markers = _extend_unique([], options.get("unsafe_path_markers"))
     denial_keywords = _extend_unique(_DENIAL_KEYWORDS, options.get("denial_keywords"))
     privilege_param_keywords = _extend_unique(_PRIVILEGE_PARAM_KEYWORDS, options.get("privilege_param_keywords"))
     privilege_payloads = _extend_unique(_PRIVILEGE_PAYLOADS, options.get("privilege_payloads"))
@@ -155,6 +157,17 @@ def run_g45_scan(ctx: DiagnosisContext, module_dir: Path) -> ScanResult:
         max_endpoints=max_endpoints,
     )
     
+    skipped_unsafe: list[dict] = []
+    safe_endpoints: list[dict] = []
+    for ep in endpoints:
+        blocked, reason = is_dangerous_endpoint(ep.get("method", "GET"), ep.get("path", ""), extra_markers=tuple(unsafe_path_markers))
+        if blocked:
+            skipped_unsafe.append({"method": ep.get("method", "GET"), "path": ep.get("path", ""), "reason": reason})
+        else:
+            safe_endpoints.append(ep)
+    endpoints = safe_endpoints
+    stats["skipped_unsafe_endpoints"] = len(skipped_unsafe)
+    stats["skipped_unsafe"] = skipped_unsafe[:100]
     admin_endpoints = [ep for ep in endpoints if _is_admin_endpoint(ep, admin_path_markers)]
     stats["admin_endpoints"] = len(admin_endpoints)
     stats["scanned_endpoints"] = len(endpoints)
@@ -197,12 +210,13 @@ def run_g45_scan(ctx: DiagnosisContext, module_dir: Path) -> ScanResult:
             url = ep.get("base_url", "") + ep.get("path", "")
             _log(f"    [Phase 0] Testing {method} {url} ...")
             try:
-                res = requests.request(method, probe_url(url), headers=user_a_headers, timeout=timeout, verify=False)
-                if res.status_code in {200, 201, 204}:
-                    res_text_lower = res.text.lower()
-                    if any(k.lower() in res_text_lower for k in denial_keywords):
-                        continue
-                        
+                res = requests.request(
+                    method, probe_url(url), headers=user_a_headers, timeout=timeout, verify=False, allow_redirects=False
+                )
+                vulnerable, reason = judge_vertical_access(
+                    res.status_code, res.text, res.headers.get("Content-Type", ""), denial_keywords
+                )
+                if vulnerable:
                     _log(f"    -> {method} {url} : Vulnerable to Vertical PrivEsc!")
                     findings.append(DiagnosisFinding(
                         severity="high",
@@ -351,8 +365,10 @@ def run_g45_scan(ctx: DiagnosisContext, module_dir: Path) -> ScanResult:
                             _log(f"    [Phase 2 Case 1] Testing {method} {test_url} ...")
                             try:
                                 if method == "GET":
-                                    res = requests.get(probe_url(test_url), headers=user_a_headers, timeout=timeout, verify=False)
-                                    is_vulnerable = res.status_code == 200
+                                    res = requests.get(probe_url(test_url), headers=user_a_headers, timeout=timeout, verify=False, allow_redirects=False)
+                                    is_vulnerable, _ = judge_vertical_access(
+                                        res.status_code, res.text, res.headers.get("Content-Type", ""), denial_keywords
+                                    )
                                     action_label = "조회(Read)"
                                     manual_hint = (
                                         "1. **Public/공용 API 오탐**: 블로그 글, 공지사항처럼 원래 누구나 볼 수 있는 리소스(Public Data)인 경우 취약점이 아닙니다. 스캐너는 비즈니스 맥락(이게 비밀글인지 공지글인지)을 완벽히 이해하지 못합니다.\n"
@@ -360,8 +376,10 @@ def run_g45_scan(ctx: DiagnosisContext, module_dir: Path) -> ScanResult:
                                     )
                                 else:
                                     body = safe_body(ep)
-                                    res = requests.request(method, probe_url(test_url), headers=user_a_headers, json=body, timeout=timeout, verify=False)
-                                    is_vulnerable = res.status_code in {200, 201, 204}
+                                    res = requests.request(method, probe_url(test_url), headers=user_a_headers, json=body, timeout=timeout, verify=False, allow_redirects=False)
+                                    is_vulnerable, _ = judge_vertical_access(
+                                        res.status_code, res.text, res.headers.get("Content-Type", ""), denial_keywords
+                                    )
                                     action_label = "변경(Write)"
                                     manual_hint = (
                                         "1. **응답 성공 ≠ 실제 반영**: 서버가 요청을 승인(2xx)했어도 실제로 데이터가 바뀌지 않았을 수 있습니다. User B 계정으로 다시 조회해 값이 실제로 변경·생성됐는지 확인하세요.\n"

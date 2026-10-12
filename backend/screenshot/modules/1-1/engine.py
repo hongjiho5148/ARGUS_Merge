@@ -13,8 +13,32 @@ from urllib.parse import urlsplit
 from models import AttackerSubmission, CaptureArtifact, EvidenceCase
 from redaction import redact_text
 from renderer import render_evidence_page, render_session_badge
-from route_discovery import click_element_by_id, click_element_by_text, discover_site_url, frontend_base_url
+from route_discovery import (
+    click_element_by_id,
+    click_element_by_index,
+    click_element_by_text,
+    discover_site_url,
+    frontend_base_url,
+)
 from replay import forged_request, login_via_ui, login_victim
+
+
+def _load_stored_xss_verdict():
+    """Shared verdict rules live in the diagnosis package; load them by path so
+    this standalone capture process does not import the whole package."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[3] / "diagnosis" / "stored_xss_verdict.py"
+    spec = importlib.util.spec_from_file_location("argus_stored_xss_verdict", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_verdict = _load_stored_xss_verdict()
+BROWSER_NOT_CHECKED = _verdict.BROWSER_NOT_CHECKED
+browser_status_from_capture = _verdict.browser_status_from_capture
 
 
 _EMAIL_IN_BODY_RE = re.compile(r'"email"\s*:\s*"([^"]+)"')
@@ -70,12 +94,20 @@ def _goto_site(page, case: EvidenceCase, ui_url: str) -> None:
     """Navigate to the discovered page and, if reaching the actual content
     required clicking into a specific list item during discovery (e.g. a
     post's comments), replay that same click here."""
-    page.goto(ui_url, wait_until="domcontentloaded", timeout=20_000)
-    page.wait_for_timeout(1_200)
     discovery = case.metadata.get("route_discovery") or {}
+    # An index click is replayed from the page it was found on (``route``), not
+    # from the page the click ended up on (``url``).
+    start_url = str(discovery.get("route") or "") if discovery.get("click_index") is not None else ""
+    page.goto(start_url if start_url.startswith("http") else ui_url, wait_until="domcontentloaded", timeout=20_000)
+    page.wait_for_timeout(1_200)
     click_id = str(discovery.get("click_id") or "").strip()
     click_text = str(discovery.get("click_text") or "").strip()
-    if click_id:
+    click_index = discovery.get("click_index")
+    if click_index is not None:
+        clicked = click_element_by_index(page, int(click_index))
+        case.metadata["route_click_replay"] = {"click_index": click_index, "ok": bool(clicked)}
+        page.wait_for_timeout(1_000)
+    elif click_id:
         clicked = click_element_by_id(page, click_id)
         case.metadata["route_click_replay"] = {"click_id": click_id, "ok": bool(clicked)}
         page.wait_for_timeout(1_000)
@@ -370,6 +402,11 @@ def _capture_static_evidence(case: EvidenceCase, context, output_dir: Path) -> l
         case.metadata["site_skip_reason"] = "self-record finding, not logged in as the exact victim account"
 
     case.metadata["site_mapped"] = site_mapped
+    if case.vuln_type == "Stored XSS" and not site_mapped:
+        case.metadata["browser_verification"] = {
+            "status": BROWSER_NOT_CHECKED,
+            "reason": case.metadata.get("site_skip_reason") or "no frontend page found for this API",
+        }
 
     if site_mapped:
         dialog_events: list[dict[str, str]] = []
@@ -393,6 +430,13 @@ def _capture_static_evidence(case: EvidenceCase, context, output_dir: Path) -> l
             case.metadata["site_scroll"] = {
                 "payload_scroll": payload_scroll,
                 "hero_scroll": _scroll_past_common_hero(page),
+            }
+        if case.vuln_type == "Stored XSS":
+            case.metadata["browser_verification"] = {
+                "status": browser_status_from_capture(dialog_events, payload_scroll, case.payload),
+                "dialogs": dialog_events,
+                "payload_found_in_dom": bool(payload_scroll and payload_scroll.get("found")),
+                "page": page.url,
             }
         path = output_dir / "01_site.png"
         _screenshot(page, path)

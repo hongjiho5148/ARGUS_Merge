@@ -415,7 +415,8 @@ def run_g11_scan(ctx, module_dir: Path) -> ScanResult:
     zap_runner.extra_skip_path_markers = tuple(
         str(marker).lower() for marker in (g11_config.get("extra_skip_path_markers") or []) if str(marker).strip()
     )
-    zap_runner.session_cookie_fallback = str(g11_config.get("session_cookie_fallback") or "accessToken")
+    zap_runner.session_cookie_fallback = str(g11_config.get("session_cookie_fallback") or "")
+    zap_runner.role_helpers.configure_role_tiers(g11_config.get("role_tiers"))
     target_url = g11_config.get("target_url") or raw_config.get("target_url")
     auth_tokens = g11_config.get("auth_tokens") or raw_config.get("auth_tokens") or []
 
@@ -437,14 +438,17 @@ def run_g11_scan(ctx, module_dir: Path) -> ScanResult:
     if not auth_tokens:
         try:
             from diagnosis.probe_auth import all_account_auths_with_meta
+            from diagnosis.session_cookies import cookies_from_session
             sessions, _meta = all_account_auths_with_meta(raw_config, data_dir=data_dir, refresh=True)
+            session_cookies = {id(session): cookies_from_session(session) for session in sessions}
             auth_tokens = [
                 {
                     "role": session.get("role") or session.get("email") or "account",
                     "token": session.get("token") or session.get("access_token"),
                     "base_url": session.get("base_url") or target_url,
-                    "cookies": session.get("cookies") or {},
-                    "cookie_attrs": session.get("cookie_attrs") or {},
+                    # taken from the login response's own Set-Cookie lines
+                    "cookies": session_cookies[id(session)][0],
+                    "cookie_attrs": session_cookies[id(session)][1],
                     "set_cookie_headers": session.get("set_cookie_lines") or [],
                     "login_url": session.get("login_url") or "",
                     "claims": session.get("claims") or {},

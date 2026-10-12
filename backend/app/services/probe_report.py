@@ -6,6 +6,7 @@ from typing import Any
 
 _STATUS_RANK: dict[str, int] = {
     "confirmed": 0,
+    "skipped_unsafe": 0,
     "params_issue": 1,
     "server_error": 2,
     "unknown": 3,
@@ -114,6 +115,7 @@ def summarize_probe_results(results: list[dict[str, Any]]) -> dict[str, int]:
         "endpoints_probed": len(grouped),
         "confirmed": sum(1 for row in deduped if row.get("status") == "confirmed"),
         "params_issues": sum(1 for row in deduped if row.get("status") == "params_issue"),
+        "skipped_unsafe": sum(1 for row in deduped if row.get("status") == "skipped_unsafe"),
         "rejected": sum(1 for rows in grouped.values() if endpoint_passes_rejected(rows)),
         "final_count": sum(1 for rows in grouped.values() if endpoint_passes_final(rows)),
         "discovered_count": sum(1 for rows in grouped.values() if endpoint_passes_discovered(rows)),

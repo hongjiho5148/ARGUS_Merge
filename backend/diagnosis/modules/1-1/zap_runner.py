@@ -1,5 +1,6 @@
 import time
 import os
+import sys
 import json
 import html
 import re
@@ -21,6 +22,7 @@ def _load_sibling_module(name: str):
     if spec is None or spec.loader is None:
         raise RuntimeError(f"Failed to load {path}")
     module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -29,6 +31,18 @@ report_helpers = _load_sibling_module("report")
 classify_alert = report_helpers.classify_alert
 KOREAN_REMEDIATIONS = report_helpers.KOREAN_REMEDIATIONS
 csrf_scanner = _load_sibling_module("csrf_scanner")
+baseline_repair = _load_sibling_module("baseline_repair")
+
+try:
+    from diagnosis import safety as shared_safety
+except ImportError:  # loaded outside the backend package root
+    shared_safety = _load_sibling_module("../../safety")
+
+try:
+    from diagnosis import stored_xss_verdict as xss_verdict
+except ImportError:  # loaded outside the backend package root
+    xss_verdict = _load_sibling_module("../../stored_xss_verdict")
+
 payload_catalog = _load_sibling_module("payloads")
 XSS_PAYLOADS = payload_catalog.XSS_PAYLOADS
 
@@ -245,7 +259,7 @@ result_dir_override = None
 # Set per scan by scanner.py from the ``diagnosis_1_1`` config block, so
 # target-specific endpoint names / cookie names don't have to live in code.
 extra_skip_path_markers: tuple = ()
-session_cookie_fallback = "accessToken"
+session_cookie_fallback = ""  # no guessed cookie name: unknown means "do not build a cookie rule"
 
 STATE_TRANSITION_PATH_MARKERS = (
     "/close", "/reopen", "/approve", "/reject", "/suspend", "/ban", "/unban",
@@ -419,20 +433,17 @@ def run_zap_scan(target_url: str, auth_tokens: list):
 
     try:
         # ── 다중 토큰 편의 변수 ───────────────────────────────────────────────
-        # 권한 우선순위: admin > seller > user (ZAP 기본 인증에 사용할 대표 토큰)
-
+        # 권한 우선순위: 가장 높은 권한 계정이 ZAP 기본 인증에 쓰이는 대표 토큰이 된다.
+        # (역할 단어는 diagnosis_1_1.role_tiers 설정으로 대상 사이트에 맞게 바꿀 수 있다.)
         auth_tokens = sorted(auth_tokens or [], key=account_role_rank)
         primary_token = None
         primary_role = "anonymous"
         primary_account = None
-        for priority_role in ["admin", "seller", "user"]:
-            for t in auth_tokens:
-                if priority_role in str(t.get("role", "")).lower() or priority_role in str(t.get("claims", {}) or {}).lower():
-                    primary_token = t["token"]
-                    primary_role = t.get("role", priority_role)
-                    primary_account = t
-                    break
-            if primary_token:
+        for t in auth_tokens:
+            if t.get("token"):
+                primary_token = t["token"]
+                primary_role = t.get("role", "account")
+                primary_account = t
                 break
         if not primary_token and auth_tokens:
             primary_token = auth_tokens[0]["token"]
@@ -1033,18 +1044,21 @@ def run_zap_scan(target_url: str, auth_tokens: list):
         def auth_probe_paths(endpoints: dict, account: dict) -> list:
             paths = []
             excluded = ["login", "signup", "register", "refresh", "logout", "check-", "find-", "reset-password"]
+            # paths that tend to need a login whatever the site sells
             preferred = [
                 "me",
+                "self",
+                "current",
+                "session",
+                "whoami",
                 "profile",
                 "account",
                 "user",
                 "member",
-                "application",
                 "notification",
                 "dashboard",
                 "setting",
                 "order",
-                "reservation",
             ]
             role = account.get("role", "account")
             role_lower = (role or "").lower()
@@ -1067,8 +1081,6 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                     "dashboard",
                     "member",
                     "user",
-                    "settlement",
-                    "reservation",
                     "report",
                     "me",
                     "profile",
@@ -1213,7 +1225,10 @@ def run_zap_scan(target_url: str, auth_tokens: list):
             primary_role = primary_account.get("role", "anonymous") if primary_account else "anonymous"
         if had_auth_accounts and not auth_tokens:
             print("[AuthMode] no verified authenticated account remains; stopping scan to avoid unsafe fallback requests")
-            update_status(is_running=False, message="인증 검증 실패: 보호 API에서 401이 반환되어 스캔을 중단했습니다.")
+            # Only this pass stops. The scanner runs one pass per base URL and per
+            # account, so flagging the whole run as failed here made the UI report
+            # "finished" while the remaining passes were still scanning.
+            update_status(message=f"{target_url}: 검증된 인증 계정이 없어 이 대상 스캔을 건너뜁니다.")
             return
 
         if primary_account:
@@ -1262,7 +1277,8 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                 cookie_header = build_cookie_header_from_account(account)
                 if not cookie_header and token:
                     session_cookie_name = detect_session_cookie(target_url, token, validated_endpoints)
-                    cookie_header = f"{session_cookie_name}={str(token).replace('Bearer ', '').strip()}"
+                    if session_cookie_name:
+                        cookie_header = f"{session_cookie_name}={str(token).replace('Bearer ', '').strip()}"
                 if cookie_header:
                     zap.replacer.add_rule(
                         description="AutoLoginCookie",
@@ -1289,6 +1305,13 @@ def run_zap_scan(target_url: str, auth_tokens: list):
             # 1. DELETE 메소드는 데이터 파괴 및 세션 단절 위협이 극도로 높아 강제 스킵
             if method_upper == "DELETE":
                 return True, "DELETE requests are skipped to protect active session and data integrity"
+
+            # 1-1. 공통 안전 정책(삭제·로그아웃·비밀번호 재설정·승인/반려 등 경로)
+            shared_blocked, shared_reason = shared_safety.is_dangerous_endpoint(
+                method_upper, path, details, extra_markers=extra_skip_path_markers
+            )
+            if shared_blocked:
+                return True, shared_reason
 
             # 2. Swagger details 정보 내 한글/영문 메타데이터 정적 분석
             summary = str(details.get("summary") or "").lower()
@@ -1530,12 +1553,57 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                 account_endpoints.items(),
                 key=lambda item: endpoint_role_priority(item[0], scan_account),
             )
+            csrf_state = {"ambient": None, "reason": "", "probed": False}
+
+            def run_csrf_assessment(method_name, url, body, op_details, *, dangerous):
+                if not csrf_state["probed"]:
+                    csrf_state["probed"] = True
+                    probe_urls = [
+                        f"{target_url.rstrip('/')}{p}"
+                        for p in auth_probe_paths(account_endpoints, scan_account)
+                    ]
+                    csrf_state["ambient"], csrf_state["reason"] = csrf_scanner.detect_ambient_cookie_auth(
+                        scan_account.get("cookies"), probe_urls
+                    )
+                    print(f"[CSRF] ambient cookie auth for {scan_account.get('email') or scan_account.get('role')}: "
+                          f"{csrf_state['ambient']} ({csrf_state['reason']})")
+                verdict, ev = csrf_scanner.assess_csrf(
+                    method=method_name,
+                    api_url=url,
+                    body_json=body,
+                    cookies=scan_account.get("cookies"),
+                    ambient_auth=csrf_state["ambient"],
+                    samesite_weak=csrf_scanner.samesite_is_weak(scan_account),
+                    dangerous=dangerous,
+                )
+                print(f"[CSRF] {method_name.upper()} {url} -> {verdict.status}: {verdict.reason}")
+                alert = csrf_scanner.build_alert(
+                    verdict,
+                    method=method_name,
+                    api_url=url,
+                    evidence=ev,
+                    extract_request_parts=extract_request_parts,
+                    format_http_request=format_http_request,
+                    format_http_response=format_http_response,
+                    body_json=body,
+                )
+                if alert:
+                    custom_alerts.append(alert)
+                return verdict
+
             for path, methods in ordered_account_endpoints:
                 for method, details in methods.items():
                     # 기본 api_url은 primary target 기준으로 구성 (select_token 내 path 추출용)
                     blocked, block_reason = is_dangerous_endpoint(method, path, details)
                     if blocked:
                         print(f"[Safety] skip {method.upper()} {path}: {block_reason}")
+                        if method.lower() in ("post", "put", "patch", "delete"):
+                            try:
+                                run_csrf_assessment(
+                                    method, f"{target_url.rstrip('/')}/{path.lstrip('/')}", {}, details, dangerous=True
+                                )
+                            except Exception as ce:
+                                print(f"CSRF candidate skip for {path}: {ce}")
                         continue
 
                     api_url = f"{target_url.rstrip('/')}/{path.lstrip('/')}"
@@ -1548,9 +1616,9 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                     # 이 엔드포인트 스캔 시작 전 alert 개수 스냅샷 (끝에서 account_role 일괄 태깅용)
                     _alerts_snapshot = len(custom_alerts)
     
-                    # (1) [SK 쉴더스 1-1] CSRF 공격 가능성 정밀 진단
-                    # 중요 상태 변경을 일으키는 모든 POST/PUT/DELETE/PATCH API를 점검합니다.
-                    if method.lower() in ["post", "put", "delete", "patch"]:
+                    # (1) [SK 쉴더스 1-1] CSRF 공격 가능성 진단
+                    # 쿠키 자동 인증이 성립할 때만 CSRF를 판정한다(헤더 토큰 방식은 해당 없음).
+                    if method.lower() in ["post", "put", "patch"]:
                         csrf_json_body = {}
                         csrf_body_spec = details.get("requestBody", {}) if isinstance(details, dict) else {}
                         csrf_content = csrf_body_spec.get("content", {}) if isinstance(csrf_body_spec, dict) else {}
@@ -1560,31 +1628,10 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                                 resolve_schema_ref(csrf_schema, account_swagger_components),
                                 account_swagger_components,
                             )
-                            
-                        # Use the account authentication headers as the real request baseline.
-                        # Do not exclude cookie or Authorization modes up front; judge the three CSRF defenses below.
-                        csrf_base_headers = build_auth_headers(best_token, scan_account)
-                        if csrf_json_body:
-                            csrf_base_headers["Content-Type"] = "application/json"
-                        cookie_auth_header = build_cookie_header_from_account(scan_account)
                         try:
-                            custom_alerts.extend(
-                                csrf_scanner.scan_csrf_endpoint(
-                                    method=method,
-                                    api_url=api_url,
-                                    body_json=csrf_json_body,
-                                    base_headers=csrf_base_headers,
-                                    scan_account=scan_account,
-                                    cookie_auth_header=cookie_auth_header,
-                                    check_csrf_token_absence=check_csrf_token_absence,
-                                    has_unsafe_samesite_cookie=has_unsafe_samesite_cookie,
-                                    extract_request_parts=extract_request_parts,
-                                    format_http_request=format_http_request,
-                                    format_http_response=format_http_response,
-                                )
-                            )
+                            run_csrf_assessment(method, api_url, csrf_json_body, details, dangerous=False)
                         except Exception as ce:
-                            print(f"CSRF Custom scan skip for {api_url}: {ce}")
+                            print(f"CSRF assessment skip for {api_url}: {ce}")
 
 
                     # (2) [SK 쉴더스 1-1] XSS 공격 가능성 정밀 진단
@@ -1738,6 +1785,51 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                     except Exception as be:
                         print(f"[XSS Baseline DEBUG] Failed to get baseline response: {be}")
 
+                    # The spec's sample values can break rules it does not describe
+                    # (no hyphens in phone numbers, nickname length, unique e-mail...).
+                    # On a validation failure read the server's message, fix the
+                    # offending fields and retry, so the endpoint is not skipped
+                    # just because the first sample was rejected.
+                    baseline_repairs = {"body": {}, "query": {}}
+                    if (
+                        baseline_status in baseline_repair.REPAIRABLE_STATUSES
+                        and not is_multipart_request
+                        and (baseline_params or baseline_json)
+                    ):
+                        def _send_baseline(params_, json_):
+                            return requests.request(
+                                method=method.upper(),
+                                url=resolved_api_url,
+                                params=params_ or None,
+                                json=json_ if json_ else None,
+                                headers=req_headers,
+                                timeout=4,
+                            )
+
+                        try:
+                            repaired = baseline_repair.repair_request(_send_baseline, baseline_params, baseline_json)
+                            for change in repaired.changes:
+                                container = "body" if change["in"] == "body" else "query"
+                                baseline_repairs[container][change["field"]] = change["to"]
+                                print(
+                                    f"[BaselineRepair] {method.upper()} {resolved_api_url} {change['in']}.{change['field']} "
+                                    f"-> adjusted ({change['because']})"
+                                )
+                            if repaired.changes:
+                                baseline_status = repaired.status
+                                print(
+                                    f"[BaselineRepair] {method.upper()} {resolved_api_url} baseline now "
+                                    f"status={baseline_status} after {repaired.rounds} round(s)"
+                                )
+                                for field_path, value in baseline_repairs["query"].items():
+                                    base_param_defaults[field_path] = value
+                                for field_path, value in baseline_repairs["body"].items():
+                                    for target_json in (base_json_defaults, base_json_required_defaults):
+                                        if isinstance(target_json, dict) and target_json:
+                                            set_nested_value_by_keypath(target_json, field_path, value)
+                        except Exception as repair_err:
+                            print(f"[BaselineRepair] skipped for {resolved_api_url}: {repair_err}")
+
                     if baseline_status in [401, 403]:
                         print(f"[XSS DEBUG] skip fuzzing -> {method.upper()} {resolved_api_url} baseline returned {baseline_status} for account '{best_role}'")
                         continue
@@ -1844,6 +1936,8 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                             for base_stored_payload in payloads_for_xss_field(target_param, target_schema, account_swagger_components)[:4]:
                                 stored_payload = make_unique_xss_payload(base_stored_payload, target_param)
                                 stored_trials.append((target_type, target_param, stored_payload))
+                        # 브라우저 실행 증명이 가능한(innerHTML로도 실행되는) payload를 먼저 시도한다.
+                        stored_trials.sort(key=lambda trial: 0 if xss_verdict.runs_without_user_gesture(trial[2]) else 1)
                         # Stored XSS는 원인 필드 추적을 위해 한 번에 하나의 파라미터에만 payload를 저장한다.
                         for target_type, target_param, stored_payload in stored_trials:
                             store_params = dict(base_param_defaults)
@@ -1858,6 +1952,10 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                                 prop_name = k.split(".")[-1]
                                 dummy_val = default_value_for_schema(base_test_json_schemas.get(k, {"type": "string"}), account_swagger_components, prop_name)
                                 set_nested_value_by_keypath(store_json, k, base_test_enum_defaults.get(prop_name, dummy_val))
+                            # carry over values the baseline needed to be accepted
+                            for repair_path, repair_value in baseline_repairs["body"].items():
+                                if not (target_type == "json" and repair_path == target_param):
+                                    set_nested_value_by_keypath(store_json, repair_path, repair_value)
                             if target_type == "json":
                                 set_nested_value_by_keypath(store_json, target_param, stored_payload)
                             preserve_json_keys = {target_param.split(".", 1)[0].replace("[0]", "")} if target_type == "json" else set()
@@ -2055,12 +2153,16 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                                                     print(f"[STORED XSS] !!! CONFIRMED on {get_url} (Stored payload '{stored_payload}' reflected) !!!")
                                                     
                                                     response_params = infer_reflected_response_params(get_res, stored_payload)
+                                                    xss_level = xss_verdict.grade_response(get_content_type)
+                                                    level_risk, level_confidence, _ = xss_verdict.rating(xss_level)
                                                     custom_alerts.append({
                                                         "alert": "Stored Cross-Site Scripting (Stored XSS) Vulnerability",
                                                         "url": get_url,
                                                         "method": "GET",
-                                                        "risk": "High",
-                                                        "confidence": "High",
+                                                        "risk": level_risk,
+                                                        "confidence": level_confidence,
+                                                        "xss_level": xss_level,
+                                                        "response_content_type": get_content_type,
                                                         "param": target_param,
                                                         "reflected_response_params": response_params,
                                                         "attack": stored_payload,
@@ -2313,8 +2415,9 @@ def run_zap_scan(target_url: str, auth_tokens: list):
 
             k_type = custom_type or plugin_id
             if k_type == "40014" or k_type == "STORED_XSS_CUSTOM":
-                val_status = "True Positive"
-                val_reason = "POST 요청을 통한 데이터 저장 및 GET 재조회 응답에서의 영구 스크립트 유출 확인 (정탐). 단, 실제 브라우저 렌더링 시 프론트엔드(React/Vue 등)의 자동 이스케이프 설정에 따라 공격 성공 여부가 달라질 수 있으므로 프론트 연동 테스트를 통한 최종 확정이 필요합니다."
+                stored_level = alert.get("xss_level") or xss_verdict.CANDIDATE
+                val_status = xss_verdict.rating(stored_level)[2]
+                val_reason = xss_verdict.reason(stored_level, xss_verdict.BROWSER_NOT_CHECKED)
             elif k_type == "CSRF_CUSTOM":
                 val_status = "True Positive"
                 val_reason = "조작되거나 누락된 Referer/Token 조건에서 중요 상태 변경 API 호출이 수용됨 (정탐). 단, 실제 브라우저 환경의 SameSite 쿠키 정책 및 CORS/Origin 설정에 따라 공격 발화 여부가 달라질 수 있으므로 추가 확인이 필요합니다."
@@ -2352,6 +2455,8 @@ def run_zap_scan(target_url: str, auth_tokens: list):
                 "evidence_request": evidence_req,
                 "evidence_response": evidence_res,
                 "csrf_defenses": alert.get("csrf_defenses", {}),
+                "xss_level": alert.get("xss_level", ""),
+                "response_content_type": alert.get("response_content_type", ""),
                 "description": description,
                 "occurrence_count": alert.get("occurrence_count", 1),
                 "account_role": alert.get("account_role", ""),

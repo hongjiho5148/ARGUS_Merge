@@ -208,9 +208,12 @@ def _path_of_url(url: str) -> str:
 _UI_LOGIN_DEFAULTS: dict[str, Any] = {
     "trigger_words": ["로그인", "login", "sign in", "log in"],
     "container_selector": '[class*="modal" i], [role="dialog"]',
-    "email_selector": 'input[type="email"]',
+    "email_selector": 'input[type="email"], input[name*="email" i], input[autocomplete="username"], input[type="text"]',
     "password_selector": 'input[type="password"]',
-    "role_landing_paths": {"seller": "/seller", "admin": "/admin"},
+    # role keyword -> the page the app lands that role on after login; empty
+    # unless configured (screenshot.ui_login.role_landing_paths), since where a
+    # role lands is a per-site convention
+    "role_landing_paths": {},
     "error_paths": ["/401", "/403"],
     "api_path_marker": "/api/",
 }
@@ -228,6 +231,30 @@ def _ui_login_config() -> dict[str, Any]:
             merged.update({key: value for key, value in override.items() if value})
             break
     return merged
+
+
+def _find_login_form(page, cfg: dict[str, Any]):
+    """Locate the visible login form and return ``(email_input, password_input)``.
+
+    Login UIs are either a modal/dialog opened by a trigger or a page of their
+    own (``/login``), so try the modal first and then the whole page. The email
+    input is looked up inside the password field's own ``<form>`` — a header
+    search box on the same page must not be mistaken for it."""
+    for container in (cfg["container_selector"], None):
+        scope = page.locator(container).last if container else page
+        password_input = scope.locator(cfg["password_selector"]).first
+        try:
+            if not password_input.is_visible(timeout=1_500):
+                continue
+        except Exception:
+            continue
+        form = password_input.locator("xpath=ancestor::form[1]")
+        try:
+            form_scope = form if form.count() else scope
+        except Exception:
+            form_scope = scope
+        return form_scope.locator(cfg["email_selector"]).first, password_input
+    return None, None
 
 
 def _normalize_wanted_role(role: str | None) -> str:
@@ -330,12 +357,17 @@ def login_via_ui(page, account_role: str | None, victim_email: str | None = None
                 except Exception:
                     continue
             if trigger is None:
-                attempts.append({"email": credential.email, "ok": False, "reason": "no login trigger found"})
-                continue
+                # no trigger on the landing page: the login may be its own route
+                try:
+                    page.goto(f"{base}/login", wait_until="domcontentloaded", timeout=15_000)
+                    page.wait_for_timeout(800)
+                except Exception:
+                    pass
 
             try:
-                trigger.click(timeout=3000)
-                page.wait_for_timeout(500)
+                if trigger is not None:
+                    trigger.click(timeout=3000)
+                    page.wait_for_timeout(800)
                 # Scope to the just-opened modal/dialog, not the whole page —
                 # the page underneath can have its own unrelated
                 # type="email"/type="submit" elements (e.g. a search form), and
@@ -343,9 +375,10 @@ def login_via_ui(page, account_role: str | None, victim_email: str | None = None
                 # inside the modal clicks the wrong thing (previously: a
                 # search button behind the modal backdrop, timing out instead
                 # of submitting the login form).
-                modal = page.locator(cfg["container_selector"]).last
-                email_input = modal.locator(cfg["email_selector"]).first
-                password_input = modal.locator(cfg["password_selector"]).first
+                email_input, password_input = _find_login_form(page, cfg)
+                if email_input is None:
+                    attempts.append({"email": credential.email, "ok": False, "reason": "no login form found"})
+                    continue
                 email_input.fill(credential.email, timeout=3000)
                 password_input.fill(credential.password, timeout=3000)
                 # Press Enter in the password field to submit the <form>

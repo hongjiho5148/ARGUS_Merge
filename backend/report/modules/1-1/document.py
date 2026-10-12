@@ -155,13 +155,52 @@ def _csrf_block(evidence: dict[str, Any]) -> str:
     csrf = evidence.get("csrf_defenses")
     if not isinstance(csrf, dict):
         return ""
+    verdict_labels = {"confirmed": "확정", "candidate": "후보 (수동 확인 필요)"}
+    verdict = verdict_labels.get(str(csrf.get("verdict") or ""))
+    verdict_line = (
+        f'<span>판정: {_esc(verdict)} - {_esc(csrf.get("reason"))}</span>'
+        if verdict and csrf.get("reason")
+        else ""
+    )
     return f"""
       <div class="csrf">
         <strong>CSRF 방어 확인</strong>
-        <span>Origin/Referer 우회: {_esc(csrf.get("origin_referer_bypass"))}</span>
+        {verdict_line}
+        <span>Origin/Referer 우회:{_esc(csrf.get("origin_referer_bypass"))}</span>
         <span>CSRF Token 부재: {_esc(csrf.get("csrf_token_absent"))}</span>
         <span>SameSite 미흡: {_esc(csrf.get("unsafe_samesite"))}</span>
         <span>실패 방어 수: {_esc(csrf.get("failed_count"))}</span>
+      </div>
+    """
+
+
+_XSS_LEVEL_LABELS = {
+    "candidate": "서버 저장 취약 (필터링 없이 저장·반환, 현재 화면에서 실행 미확인)",
+    "high": "실행 가능성 높음 (HTML 응답에 이스케이프 없이 반사)",
+    "confirmed": "실행 확정 (브라우저에서 스크립트 실행 확인)",
+}
+_BROWSER_STATUS_LABELS = {
+    "executed": "alert 다이얼로그 발생 (실행 확인)",
+    "inert_text": "화면에 이스케이프된 텍스트로만 표시 (실행 안 됨)",
+    "not_found": "화면에서 payload를 찾지 못함",
+    "not_checked": "브라우저 확인 미수행",
+}
+
+
+def _xss_level_block(evidence: dict[str, Any]) -> str:
+    level = str(evidence.get("xss_level") or "")
+    if _is_csrf_evidence(evidence) or level not in _XSS_LEVEL_LABELS:
+        return ""
+    browser = evidence.get("browser_verification")
+    status = str(browser.get("status") or "") if isinstance(browser, dict) else ""
+    browser_line = (
+        f"<span>브라우저 검증: {_esc(_BROWSER_STATUS_LABELS.get(status, status))}</span>" if status else ""
+    )
+    return f"""
+      <div class="csrf">
+        <strong>Stored XSS 판정 등급</strong>
+        <span>등급: {_esc(_XSS_LEVEL_LABELS[level])}</span>
+        {browser_line}
       </div>
     """
 
@@ -477,6 +516,7 @@ def _finding_html(
       <h4 class="table-title">관련 URL</h4>
       {_result_table_html(finding, evidence)}
       {_csrf_block(evidence)}
+      {_xss_level_block(evidence)}
       <h3>증거 이미지</h3>
       {image_html}
       <h3>대응방안 (SK 가이드라인)</h3>

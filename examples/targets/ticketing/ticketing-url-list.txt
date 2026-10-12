@@ -1,0 +1,22 @@
+# ticketing URL List (frontend routes extracted from React Router by extract_api_from_source.py)
+# One path per line. Dynamic segments are written as {param}.
+
+/
+/calendar
+/events/{eventId}
+/login
+/signup
+/oauth2/redirect
+/terms
+/privacy
+/contact
+/orders
+/account
+/tickets
+/transfers
+/wishlist
+/events/new
+/events/{eventId}/edit
+/coupons
+/import
+/scan

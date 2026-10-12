@@ -522,6 +522,59 @@ def _finish_progress(section_id: str, report: SectionReport) -> None:
     dp.finish(f"{section_id}: {report.status}")
 
 
+def apply_g11_browser_verdicts(report: SectionReport, capture_summary: dict[str, Any]) -> int:
+    """Fold the capture browser's Stored XSS observations into the findings.
+
+    The scan grades a finding from the HTTP response alone; the capture then
+    opens the real page. Executed -> confirmed, shown as inert text -> candidate,
+    page not inspected -> the response-based level stands. Returns how many
+    findings were updated."""
+    from diagnosis import stored_xss_verdict as verdict
+
+    def key(evidence: dict[str, Any]) -> tuple[str, str, str, str]:
+        return (
+            str(evidence.get("vuln_type") or ""),
+            str(evidence.get("url") or "").rstrip("/"),
+            str(evidence.get("param") or ""),
+            str(evidence.get("account_role") or ""),
+        )
+
+    browser_by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    for row in capture_summary.get("results") or []:
+        if not isinstance(row, dict) or not row.get("ok"):
+            continue
+        browser = row.get("browser_verification")
+        match = row.get("match")
+        if isinstance(browser, dict) and isinstance(match, dict):
+            browser_by_key[key(match)] = browser
+
+    updated = 0
+    for finding in report.findings:
+        evidence = finding.evidence
+        if str(evidence.get("vuln_type") or "") != "Stored XSS":
+            continue
+        browser = browser_by_key.get(key(evidence))
+        if browser is None:
+            continue
+        status = str(browser.get("status") or verdict.BROWSER_NOT_CHECKED)
+        response_level = str(evidence.get("xss_level") or verdict.CANDIDATE)
+        level = verdict.final_level(response_level, status)
+        risk, confidence, validation_status = verdict.rating(level)
+        evidence.update(
+            {
+                "xss_level": level,
+                "xss_level_by_response": response_level,
+                "browser_verification": browser,
+                "risk": risk,
+                "confidence": confidence,
+                "validation_status": validation_status,
+                "validation_reason": verdict.reason(level, status),
+            }
+        )
+        updated += 1
+    return updated
+
+
 def _run_g11_screenshot_capture(mod: Any, ctx: DiagnosisContext, report: SectionReport) -> None:
     """Generate 1-1 evidence screenshots after latest.yaml is written.
 
@@ -635,6 +688,15 @@ def _run_g11_screenshot_capture(mod: Any, ctx: DiagnosisContext, report: Section
             result_payload["capture_summary"] = json.loads(summary_path.read_text(encoding="utf-8"))
         except Exception:
             result_payload["capture_summary"] = {"unreadable": str(summary_path)}
+
+    summary_data = result_payload.get("capture_summary")
+    if isinstance(summary_data, dict):
+        try:
+            result_payload["browser_verdicts_applied"] = apply_g11_browser_verdicts(report, summary_data)
+            # the PDF below is built from the saved report, so save the verdicts first
+            mod.save_report(ctx, report)
+        except Exception as exc:
+            result_payload["browser_verdict_error"] = str(exc)
 
     report.findings.append(
         DiagnosisFinding(

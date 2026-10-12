@@ -20,27 +20,61 @@ def _sibling(name):
 is_payload_reflected = _sibling("xss_judgement").is_payload_reflected
 
 
+# Privilege tiers, most privileged first. The words are matched against an
+# account's role / token claims and against path segments, so they only need to
+# name the roles a target uses; override them with ``diagnosis_1_1.role_tiers``
+# in config for a site whose role vocabulary differs.
+DEFAULT_ROLE_TIERS: tuple[tuple[str, ...], ...] = (
+    ("admin", "administrator", "superuser", "super_admin", "root", "staff", "operator"),
+    ("seller", "vendor", "merchant", "partner"),
+)
+_ORDINARY_ROLE_WORDS = ("user", "member", "customer", "client", "account")
+_role_tiers: tuple[tuple[str, ...], ...] = DEFAULT_ROLE_TIERS
+
+
+def configure_role_tiers(tiers) -> None:
+    """Set the privilege tiers (list of word lists, most privileged first);
+    ``None`` restores the defaults."""
+    global _role_tiers
+    cleaned = tuple(
+        tuple(str(word).strip().lower() for word in tier if str(word).strip())
+        for tier in (tiers or [])
+        if tier
+    )
+    _role_tiers = cleaned or DEFAULT_ROLE_TIERS
+
+
+def _tier_words(index: int) -> tuple[str, ...]:
+    return _role_tiers[index] if index < len(_role_tiers) else ()
+
+
+def _segment_regex(words: tuple[str, ...]):
+    if not words:
+        return None
+    alternatives = "|".join(re.escape(word) for word in words)
+    return re.compile(rf"(^|/)({alternatives})(s)?(/|$)")
+
+
 def account_role_rank(account: dict | None) -> int:
     role_text = str((account or {}).get("role", "")).lower()
     claims_text = str((account or {}).get("claims", {}) or {}).lower()
     joined = f"{role_text} {claims_text}"
-    if "admin" in joined:
-        return 0
-    if "seller" in joined:
-        return 1
-    if "user" in joined:
-        return 2
-    return 3
+    for rank, words in enumerate(_role_tiers):
+        if any(word in joined for word in words):
+            return rank
+    if any(word in joined for word in _ORDINARY_ROLE_WORDS):
+        return len(_role_tiers)
+    return len(_role_tiers) + 1
 
 
 def is_admin_account(account: dict) -> bool:
+    """True for the top privilege tier (platform administrators)."""
     role_text = str(account.get("role", "")).lower()
     base_url_text = str(account.get("base_url", "")).lower()
     claims_text = str(account.get("claims", {}) or {}).lower()
-    return bool(account.get("token")) and (
-        "admin" in role_text
-        or "admin" in claims_text
-        or "admin" in base_url_text
+    words = _tier_words(0)
+    return bool(account.get("token")) and any(
+        word in role_text or word in claims_text or word in base_url_text for word in words
     )
 
 
@@ -58,25 +92,28 @@ def account_role_text(account: dict | None) -> str:
 
 
 def endpoint_role_priority(path_value: str, account: dict | None) -> tuple[int, str]:
+    """Order endpoints so a privileged account tests the paths of its own tier
+    first and an ordinary account tests tier-specific paths last."""
     lowered = str(path_value or "").lower()
     role_text = account_role_text(account)
-    is_admin = "admin" in role_text
-    is_seller = "seller" in role_text
-    if is_admin and re.search(r"(^|/)admin(s)?(/|$)", lowered):
-        return (0, lowered)
-    if is_seller and re.search(r"(^|/)seller(s)?(/|$)", lowered):
-        return (0, lowered)
-    if not is_admin and re.search(r"(^|/)admin(s)?(/|$)", lowered):
-        return (3, lowered)
-    if not is_seller and re.search(r"(^|/)seller(s)?(/|$)", lowered):
-        return (3, lowered)
+    tiers = [
+        (_segment_regex(words), any(word in role_text for word in words))
+        for words in _role_tiers
+    ]
+    for pattern, account_has_tier in tiers:
+        if pattern and account_has_tier and pattern.search(lowered):
+            return (0, lowered)
+    for pattern, account_has_tier in tiers:
+        if pattern and not account_has_tier and pattern.search(lowered):
+            return (3, lowered)
     return (1, lowered)
 
 
 def resource_tokens_from_path(path_value: str) -> set[str]:
+    role_words = {word for tier in _role_tiers for word in tier}
     ignored = {
-        "api", "v1", "v2", "admin", "admins", "seller", "sellers",
-        "me", "auth", "login", "logout", "search", "check",
+        "api", "v1", "v2", "me", "auth", "login", "logout", "search", "check",
+        *role_words, *(f"{word}s" for word in role_words),
     }
     tokens = set()
     for segment in (path_value or "").split("/"):

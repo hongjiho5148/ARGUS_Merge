@@ -359,6 +359,18 @@ def _normalized_segments(path: str) -> list[str]:
 _API_PREFIX_SEGMENTS = {"api", "v1", "v2", "v3"}
 
 
+_ROUTE_PLACEHOLDER_RE = re.compile(r"\{[^}/]+\}|:[A-Za-z_]\w*")
+
+
+def _is_route_template(route: str) -> bool:
+    """``/posts/{id}`` (url-list style) or ``/posts/:id`` (React Router style)."""
+    return bool(_ROUTE_PLACEHOLDER_RE.search(route or ""))
+
+
+def _fill_route_template(route: str, resource_id: str) -> str:
+    return _ROUTE_PLACEHOLDER_RE.sub(str(resource_id), route)
+
+
 def _derive_candidate_routes(case: EvidenceCase) -> list[str]:
     """Guess plausible frontend routes directly from the target API path's
     own segments (e.g. .../api/v1/seller/accommodations -> try /seller).
@@ -607,6 +619,22 @@ def click_element_by_id(page, resource_id: str) -> dict[str, Any] | None:
     return {"clicked_id": resource_id, "label": result.get("label", "")}
 
 
+def click_element_by_index(page, index: int) -> dict[str, Any] | None:
+    """Replay a brute-force discovery click by position: the same selector and
+    index that surfaced the content, so a short label like "3" cannot be
+    matched against unrelated links."""
+    try:
+        element = page.locator(_BRUTE_CLICK_SELECTOR).nth(index)
+        label = (element.inner_text(timeout=800) or "").strip()
+        if any(word in label.lower() for word in _DANGEROUS_CLICK_WORDS):
+            return None
+        element.scroll_into_view_if_needed(timeout=2000)
+        element.click(timeout=3000)
+        return {"clicked_index": index, "label": label[:80]}
+    except Exception:
+        return None
+
+
 def click_element_by_text(page, text: str) -> dict[str, Any] | None:
     result = _click_matching(page, text)
     if not result:
@@ -709,6 +737,7 @@ def _brute_force_click_discovery(
                     "matched_request": {"method": "PAGE_CONTENT", "url": page.url},
                     "content_match": content_match,
                     "click_text": label[:80],
+                    "click_index": i,
                 }
             # With payload text to verify (content_needles), an exact API call
             # alone is NOT enough: a list endpoint (/api/v1/posts) fires from
@@ -724,6 +753,7 @@ def _brute_force_click_discovery(
                         "route": page_url,
                         "matched_request": exact_req,
                         "click_text": label[:80],
+                        "click_index": i,
                     }
                 # Payload not visible here, but this click hit the exact target
                 # API — remember it and keep looking for a visible payload.
@@ -733,6 +763,7 @@ def _brute_force_click_discovery(
                         "route": page_url,
                         "matched_request": exact_req,
                         "click_text": label[:80],
+                        "click_index": i,
                     }
             if not needles and shape_req is not None:
                 return {
@@ -740,6 +771,7 @@ def _brute_force_click_discovery(
                     "route": page_url,
                     "matched_request": shape_req,
                     "click_text": label[:80],
+                    "click_index": i,
                 }
         except Exception:
             pass
@@ -978,14 +1010,29 @@ def discover_site_url(context, case: EvidenceCase) -> dict[str, Any]:
         if route and route != "/" and route not in frontier and not _ERROR_PAGE_RE.match(route):
             frontier.append(route)
 
+    # Routes with a placeholder (/posts/{id}) are not pages to visit as written;
+    # they become detail-page templates filled with the finding's own record id.
+    detail_templates: list[str] = []
+
+    def _seed(route: str) -> None:
+        if _is_route_template(route):
+            if route not in detail_templates:
+                detail_templates.append(route)
+        else:
+            _add(route)
+
     for candidate in _derive_candidate_routes(case):
         _add(candidate)
     api_tree_routes = _frontend_routes_from_api_tree(base)
     for candidate in api_tree_routes:
-        _add(candidate)
-    examples_routes = _frontend_routes_from_examples()
+        _seed(candidate)
+    # The route lists under examples/ belong to whichever target they were
+    # written for, so they only stand in when the inventory has no frontend
+    # routes of its own; mixing them in sends the crawl to pages that do not
+    # exist on the current target.
+    examples_routes = [] if api_tree_routes else _frontend_routes_from_examples()
     for candidate in examples_routes:
-        _add(candidate)
+        _seed(candidate)
 
     _log(
         f"target={case.exchange.method} {_path_of(case.exchange.url)} "
@@ -1147,6 +1194,21 @@ def discover_site_url(context, case: EvidenceCase) -> dict[str, Any]:
         return _finalize(root_hit)
     if root_hit and deferred_request_hit is None:
         deferred_request_hit = root_hit
+
+    # Phase 3b — detail pages. The scan recorded the id of the record that holds
+    # the payload, and the target's route list says which route shows one record
+    # (/posts/{id}); open it directly instead of hunting for the record in a
+    # paginated list.
+    if content_needles and detail_templates:
+        record_ids = _resource_ids_from_evidence(case)[:3]
+        ranked_templates = sorted(detail_templates, key=lambda t: _route_priority(case, t), reverse=True)[:5]
+        _log(f"detail pages: templates={ranked_templates} ids={record_ids}")
+        for template in ranked_templates:
+            for record_id in record_ids:
+                match = probe(_fill_route_template(template, record_id))
+                if _is_confirmed(match):
+                    match["detail_template"] = template
+                    return _finalize(match)
 
     # Phase 4 — content that only loads after clicking into a specific list
     # item (a post's comments, a detail view, ...). Nothing fires on page
